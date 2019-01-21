@@ -1,0 +1,1 @@
+from auth0_login.aws.sts_command import assume_role_with_saml
