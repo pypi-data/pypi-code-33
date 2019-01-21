@@ -1,0 +1,3 @@
+import xini
+
+xini.main()
