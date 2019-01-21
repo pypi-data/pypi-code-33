@@ -1,0 +1,2 @@
+class PrepareDockerEnvironmentException(Exception):
+    pass
