@@ -1,0 +1,41 @@
+import codecs
+from os import path
+from setuptools import setup
+
+here = path.abspath(path.dirname(__file__))
+
+# Get the long description from the README file
+with codecs.open(path.join(here, 'README.rst'), encoding='utf-8') as f:
+    long_description = f.read()
+
+setup(
+    name='plyara',
+    version='1.4.1',
+    description='Parse YARA rules.',
+    long_description=long_description,
+    url='https://github.com/plyara/plyara',
+    author='8u1a',
+    license='Apache License 2.0',
+    test_suite='tests.unit_tests',
+    classifiers=[
+        'Development Status :: 5 - Production/Stable',
+        'Intended Audience :: Developers',
+        'Topic :: Software Development :: Build Tools',
+        'License :: OSI Approved :: Apache Software License',
+        'Programming Language :: Python :: 2',
+        'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.7',
+    ],
+    keywords='malware analysis yara',
+    py_modules=['plyara'],
+    install_requires=[
+        'ply>=3.11',
+        'enum34;python_version<"3.4"',
+    ],
+    entry_points={
+        'console_scripts': [
+            'plyara=plyara:main',
+        ],
+    },
+)
