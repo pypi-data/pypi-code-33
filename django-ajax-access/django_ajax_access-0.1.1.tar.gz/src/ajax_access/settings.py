@@ -1,0 +1,33 @@
+from django.conf import settings as django_settings
+
+SETTINGS = getattr(django_settings, "AJAX_ACCESS", {})
+
+LOGIN_RATELIMIT_KEY = SETTINGS.get(
+    "LOGIN_RATELIMIT_KEY",
+    "ip",
+)
+
+LOGIN_RATELIMIT_RATE = SETTINGS.get(
+    "LOGIN_RATELIMIT_RATE",
+    "10/h",
+)
+
+LOGIN_RATELIMIT_BLOCK = SETTINGS.get(
+    "LOGIN_RATELIMIT_BLOCK",
+    True
+)
+
+LOGOUT_RATELIMIT_KEY = SETTINGS.get(
+    "LOGOUT_RATELIMIT_KEY",
+    "ip"
+)
+
+LOGOUT_RATELIMIT_RATE = SETTINGS.get(
+    "LOGOUT_RATELIMIT_RATE",
+    "10/h",
+)
+
+LOGOUT_RATELIMIT_BLOCK = SETTINGS.get(
+    "LOGOUT_RATELIMIT_BLOCK",
+    True
+)
