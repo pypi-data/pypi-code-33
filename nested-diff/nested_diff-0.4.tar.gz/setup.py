@@ -1,0 +1,42 @@
+from setuptools import setup
+import nested_diff
+
+
+with open('README.md') as f:
+    long_description = f.read()
+
+setup(
+    name='nested_diff',
+    version=nested_diff.__version__,
+    description='Recursive diff for nested structures',
+    long_description=long_description,
+    long_description_content_type="text/markdown",
+    classifiers=[
+        'Development Status :: 3 - Alpha',
+        'Intended Audience :: Developers',
+        'License :: OSI Approved :: Apache Software License',
+        'Operating System :: OS Independent',
+        'Programming Language :: Python',
+        'Programming Language :: Python :: 2',
+        'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.4',
+        'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: Implementation :: CPython',
+        'Programming Language :: Python :: Implementation :: PyPy',
+        'Topic :: Software Development :: Libraries :: Python Modules',
+    ],
+    keywords='diff nested-diff recursive-diff nested-data data-structures',
+    url='https://github.com/mr-mixas/Nested-Diff.py',
+    author='Michael Samoglyadov',
+    author_email='mixas.sr@gmail.com',
+    license='Apache License 2.0',
+    packages=['nested_diff'],
+    test_suite='tests',
+    setup_requires=["pytest-runner"],
+    tests_require=['pytest'],
+    include_package_data=True,
+    zip_safe=False
+)
