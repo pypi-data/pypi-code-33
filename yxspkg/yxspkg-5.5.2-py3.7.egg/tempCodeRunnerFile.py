@@ -1,0 +1,1 @@
+k = np.frombuffer(fp.read(4), dtype= 'int32' )[0]
