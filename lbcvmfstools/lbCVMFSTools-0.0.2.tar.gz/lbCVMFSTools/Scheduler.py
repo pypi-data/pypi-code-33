@@ -1,0 +1,50 @@
+from lbCVMFSTools.Injector import inject, injector
+from lbCVMFSTools.TaskHandlerInterface import TaskHandlerInterface
+from lbCVMFSTools.TransactionHandlerInterface import \
+    TransactionHandlerInterface
+from contextlib import contextmanager
+import logging
+
+
+@inject(taskHandler=TaskHandlerInterface,
+        transactionHandler=TransactionHandlerInterface)
+class Scheduler():
+    def __init__(self, taskHandler=None, transactionHandler=None):
+        self.taskHandler = taskHandler
+        self.transactionHandler = transactionHandler
+        if hasattr(self.taskHandler, 'no_auto_start'):
+            if self.taskHandler.no_auto_start:
+                return
+        self.start()
+
+    def start(self):
+        tasks = self.taskHandler.get_list_of_tasks()
+        for task in tasks:
+            logging.info("Starting executing: %s" % str(task))
+            error = self.execute(task=task)
+            if error:
+                logging.info("Fail executing: %s" % str(task))
+                logging.error(error)
+            else:
+                logging.info("Successfully executed: %s" % str(task))
+
+    def execute(self, task):
+        try:
+            with self.transaction():
+                self.taskHandler.perform_task(task)
+            return None
+        except Exception as e:
+            return e
+
+    @contextmanager
+    def transaction(self):
+        logging.info("Starting transaction")
+        self.transactionHandler.transactionStart()
+        try:
+            yield
+            logging.info("Sending transaction")
+            self.transactionHandler.transactionPublish()
+        except Exception as e:
+            logging.info("Aborting transaction")
+            self.transactionHandler.transactionAbort()
+            raise e
