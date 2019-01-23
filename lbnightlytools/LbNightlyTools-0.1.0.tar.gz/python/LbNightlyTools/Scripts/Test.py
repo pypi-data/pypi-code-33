@@ -1,0 +1,249 @@
+###############################################################################
+# (c) Copyright 2013 CERN                                                     #
+#                                                                             #
+# This software is distributed under the terms of the GNU General Public      #
+# Licence version 3 (GPL Version 3), copied verbatim in the file "COPYING".   #
+#                                                                             #
+# In applying this licence, CERN does not waive the privileges and immunities #
+# granted to it by virtue of its status as an Intergovernmental Organization  #
+# or submit itself to any jurisdiction.                                       #
+###############################################################################
+'''
+Module containing the classes and functions used to test a
+"Nightly Build Slot".
+
+@author: Marco Clemencic <marco.clemencic@cern.ch>
+'''
+
+import os
+import shutil
+import json
+import codecs
+from datetime import datetime, timedelta
+from subprocess import call
+
+from LbNightlyTools.Utils import chdir, ensureDirs
+from LbNightlyTools.Utils import cpuinfo as get_cpuinfo, write_json
+from LbNightlyTools.Utils import Dashboard, JobParams
+from LbNightlyTools.Scripts.Build import unpackArtifacts, wipeDir
+
+from LbNightlyTools.Scripts.Common import BaseScript
+
+
+def fixFailureCauses(summary_file):
+    '''
+    Process summary.json file to fix missing failure cause.
+    '''
+    import logging
+    from os.path import join, exists
+    dirname = os.path.dirname(summary_file)
+    if not exists(summary_file):
+        ensureDirs(dirname)
+        with open(summary_file, 'wb') as summary:
+            summary.write('{}\n')
+        return
+    with open(summary_file, 'rb+') as summary:
+        touched = False
+        try:
+            results = json.load(summary)
+        except:
+            return  # ignore broken files
+        for test in results:
+            if (test.get('outcome', 'PASS') != 'PASS' and
+                    'Causes' in test.get('fields', []) and
+                    not test['cause']):
+                test['cause'] = (open(join(dirname, test['id'], 'causes'))
+                                 .read().strip()
+                                 .replace('<pre>', '')
+                                 .replace('</pre>', ''))
+                touched = True
+        if touched:
+            logging.info('adding failure causes in %s', summary_file)
+            summary.seek(0)
+            json.dump(results, summary, sort_keys=True, indent=4)
+            summary.truncate()
+
+
+class Script(BaseScript):
+    '''
+    Script to test the projects described in a slot configuration.
+    '''
+
+    def copy_new_refs(self, proj):
+        '''
+        Find the .new files in the project directory and copy them to
+        the artifacts directory.
+        '''
+        self.log.debug('looking for .new files')
+        from os.path import join, relpath, dirname, basename, exists
+        from zipfile import ZipFile
+        proj_root = self._buildDir(proj)
+        zip_name = self._summaryDir('newrefs', proj) + '.zip'
+
+        def all_dot_new_files():
+            '''get all ".new" files in the project directory'''
+            for root, dirs, files in os.walk(proj_root):
+                dirs[:] = [d for d in dirs
+                           if not basename(d).startswith('build.')]
+                for f in files:
+                    if f.endswith('.new'):
+                        yield join(root, f)
+
+        # FIXME: it should be better to use a temporary file
+        ensureDirs(dirname(zip_name))
+        zip_empty = True
+        with ZipFile(zip_name, 'w') as dest_zip:
+            for src in all_dot_new_files():
+                try:
+                    dest_zip.write(src, relpath(src, proj_root))
+                except IOError:
+                    # ignore failures in the copy (not fatal)
+                    pass
+            zip_empty = len(dest_zip.infolist()) == 0
+        if zip_empty and exists(zip_name):
+            os.remove(zip_name)
+
+    def main(self):
+        '''
+        Script main logic.
+        '''
+
+        self._setup(json_type='tests-result', summary_base='tests')
+
+        opts = self.options
+
+        # prepare build directory
+        if opts.clean:
+            wipeDir(self.build_dir)
+        if not opts.no_unpack:
+            unpackArtifacts(os.path.join(self.artifacts_dir, 'packs'),
+                            self.build_dir)
+
+        cpuinfo = get_cpuinfo()
+        # run tests
+        with chdir(self.build_dir):
+            def before(proj):
+                '''callback used before testing a project'''
+                self.send({'project': proj.name,
+                           'started': datetime.now().isoformat()})
+                if not os.path.exists(self._summaryDir(proj)):
+                    os.makedirs(self._summaryDir(proj))
+                write_json(cpuinfo, self._summaryDir(proj, 'cpuinfo.json'))
+            for proj, _ in self.slot.testGen(projects=opts.projects,
+                                             before=before):
+                html_src = self._buildDir(proj,
+                                          'build.{0}'.format(self.platform),
+                                          'html')
+                summary_json = os.path.join(html_src, 'summary.json')
+                fixFailureCauses(summary_json)
+
+                # update annotations with cpuinfo summary
+                try:
+                    annotations_json = os.path.join(html_src,
+                                                    'annotations.json')
+                    with codecs.open(annotations_json, 'rb', 'utf-8') as ann:
+                        annotations = json.load(ann)
+
+                    if 'cpuinfo' not in annotations:
+                        annotations['cpuinfo'] = [
+                            'ncpus: {0}'.format(len(cpuinfo)),
+                            'model name: {0}'.format(cpuinfo[0]['model name']),
+                            'flags: {0}'.format(' '.join(cpuinfo[0]['flags'])),
+                            ]
+                        write_json(annotations, annotations_json)
+                except Exception, x:  # ignore errors reading summary file
+                    self.log.warning('failed to update annotations.json: %s',
+                                     x)
+
+                try:
+                    results = json.load(codecs.open(summary_json,
+                                                    'rb', 'utf-8'))
+                except:  # ignore errors reading summary file
+                    results = []
+
+                html_dst = self._summaryDir(proj, 'results')
+                if os.path.exists(html_dst):
+                    shutil.rmtree(html_dst)
+                if os.path.exists(html_src):
+                    shutil.copytree(html_src, html_dst)
+
+                self.copy_new_refs(proj)
+
+                self.log.debug('compressing artifacts')
+                call(['zip', '-r', '-m', '-q', proj.name, proj.name],
+                     cwd=self._summaryDir())
+                self.send({'project': proj.name,
+                           'completed': datetime.now().isoformat(),
+                           'results': results})
+                self.send({'type': 'artifacts', 'project': proj,
+                           'path': self.artifacts_dir})
+
+        # ensure we do not have pending tasks
+        self.tasks.join()
+
+        return 0
+
+
+class Poll(BaseScript):
+    # number of tests to trigger per iteration
+    BATCH_SIZE = int(os.environ.get('TESTS_BATCH_SIZE') or '20')
+    FILENAME_TPL = 'test-{slot}-{build_id}-{project}-{platform}.txt'
+
+    def main(self):
+        '''
+        Main logic of the script.
+        '''
+        d = Dashboard(flavour=self.options.flavour)
+
+        # builds older than this are considered too old to care about
+        expiration_time = str(datetime.now() - timedelta(hours=18))
+
+        ready_builds = d.db.get('ready-builds', {'entries': []})
+        entries = list(ready_builds['entries'])
+        triggered = []
+        expired = []
+        for entry in entries:
+            # do not run test if disabled
+            do_not_trigger = (entry.get('no_test') or
+                              entry['slot'] == 'lhcb-coverity')
+            if entry.get('time', expiration_time) <= expiration_time:
+                expired.append(entry)
+                self.log.warning('expired entry: %s', entry)
+            elif do_not_trigger:
+                # no need to keep entries that do not need to be tested
+                expired.append(entry)
+            else:
+                self.log.debug('triggering %s', entry)
+                with open(self.FILENAME_TPL.format(**entry), 'w') as params:
+                    jp = JobParams(
+                        slot=entry['slot'],
+                        slot_build_id=entry['build_id'],
+                        project=entry['project'],
+                        platform=entry['platform'],
+                        os_label=entry.get('os_label',
+                                           entry['platform'].split('-')[1]),
+                        flavour=self.options.flavour
+                    )
+                    for k, v in entry.get('scripts', {}).items():
+                        if v:
+                            setattr(jp, 'scripts_{0}'.format(k), v)
+                    # FIXME: this is a temporary workaround
+                    if 'avx2' in jp.platform:
+                        jp.tests_node = 'avx2-tests'
+                    params.write(str(jp))
+                    params.write('\n')
+                triggered.append(entry)
+                if len(triggered) == self.BATCH_SIZE:
+                    break
+        if self.options.submit:
+            def strip_removed_entries(d):
+                '''callback to update the dashboard document'''
+                if 'entries' not in d:
+                    d['entries'] = []
+                d['entries'] = [entry for entry in d['entries']
+                                if entry not in triggered and
+                                entry not in expired]
+                return d
+            d.update('ready-builds', strip_removed_entries)
+        self.log.info('triggered %d tests, %d pending', len(triggered),
+                      len(entries) - len(triggered) - len(expired))
