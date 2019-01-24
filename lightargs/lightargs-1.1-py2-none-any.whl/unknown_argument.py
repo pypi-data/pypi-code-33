@@ -1,0 +1,3 @@
+class UnknownArgument(Exception):
+    pass
+
