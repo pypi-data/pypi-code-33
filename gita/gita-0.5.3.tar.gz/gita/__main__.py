@@ -1,0 +1,91 @@
+import os
+import yaml
+import argparse
+import pkg_resources
+
+from . import utils
+
+
+def f_add(args):
+    utils.add_repos(args.repo)
+
+
+def f_ls(args):
+    repos = utils.get_repos()
+    if args.repo:  # one repo, show its path
+        print(repos[args.repo])
+    else:
+        for line in utils.describe(repos):
+            print(line, end='')
+
+
+def f_rm(args):
+    path_file = utils.get_path_fname()
+    if os.path.exists(path_file):
+        repos = utils.get_repos()
+        del repos[args.repo]
+        with open(path_file, 'w') as f:
+            f.write(os.pathsep.join(repos.values()))
+
+
+def f_git_cmd(args):
+    """
+    Delegate git command
+    """
+    repos = utils.get_repos()
+    if args.repo:  # with user specified repo(s)
+        repos = {k: repos[k] for k in args.repo}
+    for path in repos.values():
+        utils.exec_git(path, args.cmd)
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(prog='gita')
+    subparsers = p.add_subparsers(title='sub-commands',
+                                  help='additional help with sub-command -h')
+
+    version = pkg_resources.require('gita')[0].version
+    p.add_argument('--version', action='version', version=f'%(prog)s {version}')
+
+    # delegate git sub-commands
+    p_add = subparsers.add_parser('add', help='add repo(s)')
+    p_add.add_argument('repo', nargs='+', help="add repo(s)")
+    p_add.set_defaults(func=f_add)
+
+    p_ls = subparsers.add_parser('ls', help='display summaries of all repos')
+    p_ls.add_argument('repo', nargs='?', choices=utils.get_repos(),
+            help="show path of the chosen repo")
+    p_ls.set_defaults(func=f_ls)
+
+    p_rm = subparsers.add_parser('rm', help='remove repo')
+    p_rm.add_argument('repo', choices=utils.get_repos(),
+            help="remove the chosen repo")
+    p_rm.set_defaults(func=f_rm)
+
+    # sub-commands that fit boilerplate
+    fname = os.path.join(os.path.dirname(__file__), "cmds.yaml")
+    with open(fname, 'r') as stream:
+        cmds = yaml.load(stream)
+
+    for name, data in cmds.items():
+        help = data['help']
+        cmd = data['cmd'] if 'cmd' in data else name
+        sp = subparsers.add_parser(name, help=help)
+        sub_help = data['sub_help'] if 'sub_help' in data \
+                   else help + 'of the chosen repo(s)'
+        sp.add_argument('repo',
+                        nargs=data['nargs'],
+                        choices=utils.get_repos(),
+                        help=sub_help)
+        sp.set_defaults(func=f_git_cmd, cmd='git ' + cmd)
+
+    args = p.parse_args(argv)
+
+    if 'func' in args:
+        args.func(args)
+    else:
+        p.print_help()  # pragma: no cover
+
+
+if __name__ == '__main__':
+    main()  # pragma: no cover
