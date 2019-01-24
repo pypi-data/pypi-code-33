@@ -1,0 +1,1 @@
+from .verses import BibleVersesParser
