@@ -1,0 +1,35 @@
+"""
+
+Code based on `setuptools-git-version` which can be found here:
+
+    https://github.com/pyfidelity/setuptools-git-version
+
+"""
+
+from subprocess import check_output, CalledProcessError
+
+
+command = 'git describe --tags --long --dirty'
+fmt = '{tag}.{commitcount}+{gitsha}'
+
+
+def format_version(version, fmt=fmt):
+    parts = version.split('-')
+    assert len(parts) in (3, 4)
+    dirty = len(parts) == 4
+    tag, count, sha = parts[:3]
+    if count == '0' and not dirty:
+        return tag
+    return fmt.format(tag=tag, commitcount=count, gitsha=sha.lstrip('g'))
+
+
+def get_git_version():
+    try:
+        git_version = check_output(command.split()).decode('utf-8').strip()
+        return format_version(version=git_version)
+    except CalledProcessError:
+        return 'v?.?.?'
+
+
+# determine version from git
+__version__ = get_git_version()
