@@ -1,0 +1,27 @@
+from setuptools import find_packages, setup
+
+with open('README.md', 'r', encoding='utf-8') as f:
+	long_description = f.read()
+
+with open('requirements.txt', 'r', encoding='utf-8') as f:
+	requirements = f.read().strip().split()
+
+setup(
+	name='tablextract',
+	version='1.0.11',
+	author='Juan C. Roldán',
+	author_email='juancarlos@sevilla.es',
+	description='Extract the information represented in any HTML table',
+	long_description=long_description,
+	long_description_content_type='text/markdown',
+	install_requires=requirements,
+	url='https://github.com/juancroldan/tablextract',
+	packages=find_packages(),
+	package_data={'': ['resources/add_render.js']},
+	include_package_data=True,
+	classifiers=[
+		'Programming Language :: Python :: 3',
+		'License :: OSI Approved :: MIT License',
+		'Operating System :: OS Independent',
+	],
+)
