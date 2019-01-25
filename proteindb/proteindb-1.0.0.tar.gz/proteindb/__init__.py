@@ -1,0 +1,1 @@
+from .proteindb import ProteinDB
