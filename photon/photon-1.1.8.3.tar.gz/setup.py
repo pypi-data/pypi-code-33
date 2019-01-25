@@ -1,0 +1,31 @@
+import setuptools
+
+setuptools.setup(
+    name="photon",
+    version="1.1.8.3",
+    py_modules=['photon'],
+    author="Somdev Sangwan",
+    author_email="s0md3v@gmail.com",
+    description="Incredibly fast crawler designed for OSINT",
+    url="https://github.com/s0md3v/Photon",
+    license='MIT',
+    packages=setuptools.find_packages(),
+    install_requires=['requests', 'urllib3', 'tld'],
+    keywords='photon, crawling, python crawling',
+    classifiers=[
+        "License :: OSI Approved :: MIT License",
+        'Intended Audience :: Developers',
+        'Development Status :: 5 - Production/Stable',
+        'Programming Language :: Python',
+        'Programming Language :: Python :: 2',
+        'Programming Language :: Python :: 2.6',
+        'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.4',
+        'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3.6',
+        'Operating System :: OS Independent',
+        'Environment :: Console',
+        'Topic :: Software Development :: Libraries :: Python Modules',
+    ],
+)
