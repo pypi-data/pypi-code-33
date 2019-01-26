@@ -1,0 +1,7 @@
+HELP = 'help'
+INSTRUCTIONS = 'instructions'
+TEST_CASE = 'case'
+TEST_SUITE = 'suite'
+SYMBOL = 'symbol'
+SPECIFICATION = 'spec'
+HTML_DOCUMENTATION = 'htmldoc'
