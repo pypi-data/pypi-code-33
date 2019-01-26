@@ -1,0 +1,2 @@
+class NonCanonicalError(ValueError):
+    pass
