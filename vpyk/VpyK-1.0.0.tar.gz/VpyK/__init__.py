@@ -1,0 +1,1 @@
+from VpyK.api import vkapi
