@@ -1,0 +1,13 @@
+MAIN = 0
+FP = 0
+ENV = 0
+SESSION = 0
+REPLACER = 0
+
+def set_main(x):
+	global MAIN,FP,ENV,SESSION,REPLACER
+	MAIN = x
+	FP = x.FP
+	ENV = x.ENV
+	SESSION = x.SESSION
+	REPLACER = x.REPLACER
