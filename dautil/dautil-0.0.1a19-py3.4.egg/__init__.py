@@ -1,0 +1,21 @@
+# Temporary I think
+import warnings
+warnings.filterwarnings(action='ignore',
+                        message='.*IPython widgets are experimental.*')
+import logging
+
+logging.basicConfig()
+LOGGER = logging.getLogger(__name__)
+
+from .nb import *
+from .options import *
+from .plotting import *
+from .report import *
+from .stats import *
+
+try:
+    from .web import *
+except ImportError as e:
+    LOGGER.warning('Could not import web module %s', e)
+
+from .db import *
