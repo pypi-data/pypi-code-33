@@ -1,0 +1,80 @@
+from pkg_resources import get_distribution
+from pkg_resources import resource_filename
+import logging
+import logging.config
+import pprint
+from appdirs import AppDirs
+import os
+
+
+def get_logger(name):
+    log_config = resource_filename(__name__, 'log.conf')
+    logging.config.fileConfig(log_config)
+    logger = logging.getLogger(name)
+
+    return logger
+
+
+def conf_logger(name):
+    # TODO check for conf file
+    # else basic config
+    logging.basicConfig()
+
+    return logging.getLogger(name)
+
+
+def shorten(module_name):
+    dot_i = module_name.find('.')
+
+    return module_name[:dot_i]
+
+
+def log(modules, name):
+    skiplist = ['pkg_resources', 'distutils', 'zmq']
+
+    logger = get_logger(name)
+    logger.debug('Inside the log function')
+    versions = {}
+
+    for k in modules.keys():
+        str_k = str(k)
+
+        if '.version' in str_k:
+            short = shorten(str_k)
+
+            if short in skiplist:
+                continue
+
+            try:
+                ver = get_distribution(short).version
+                logger.info('%s=%s' % (short, ver))
+                versions[short] = ver
+            except ImportError:
+                logger.warn('Could not import', short)
+
+    return versions
+
+
+class VersionsLogFileHandler(logging.FileHandler):
+    def __init__(self, fName):
+        dirs = AppDirs("PythonDataAnalysisCookbook", "Ivan Idris")
+        path = dirs.user_log_dir
+        print(path)
+
+        if not os.path.exists(path):
+            os.mkdir(path)
+
+        super(VersionsLogFileHandler, self).__init__(
+              os.path.join(path, fName))
+
+
+class Printer():
+    def __init__(self, modules=None, name=None):
+        if modules and name:
+            log(modules, name)
+
+    def print(self, *args):
+        for arg in args:
+            pprint.pprint(arg)
+
+        print()
