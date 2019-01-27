@@ -1,0 +1,6 @@
+__title__ = 'async-vk-api'
+__version__ = '0.1.0'
+__description__ = 'Async VK API built with asks and trio'
+__url__ = 'https://github.com/Suenweek/async-vk-api'
+__author__ = 'Roman Novatorov'
+__author_email__ = 'roman.novatorov@gmail.com'
