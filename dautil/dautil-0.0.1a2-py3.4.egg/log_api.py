@@ -1,0 +1,64 @@
+from pkg_resources import get_distribution
+import logging
+import logging.config
+import pprint
+from appdirs import AppDirs
+import os
+
+
+def get_logger(name):
+    logging.config.fileConfig('log.conf')
+    logger = logging.getLogger(name)
+
+    return logger
+
+
+def shorten(module_name):
+    dot_i = module_name.find('.')
+
+    return module_name[:dot_i]
+
+
+def log(modules, name):
+    skiplist = ['pkg_resources', 'distutils']
+
+    logger = get_logger(name)
+    logger.debug('Inside the log function')
+
+    for k in modules.keys():
+        str_k = str(k)
+
+        if '.version' in str_k:
+            short = shorten(str_k)
+
+            if short in skiplist:
+                continue
+
+            try:
+                logger.info('%s=%s' % (short, get_distribution(short).version))
+            except ImportError:
+                logger.warn('Could not impport', short)
+
+
+class VersionsLogFileHandler(logging.FileHandler):
+    def __init__(self, fName):
+        dirs = AppDirs("PythonDataAnalysisCookbook", "Packt Publishing")
+        path = dirs.user_log_dir
+        print(path)
+
+        if not os.path.exists(path):
+            os.mkdir(path)
+
+        super(VersionsLogFileHandler, self).__init__(path + "/" + fName)
+
+
+class Printer():
+    def __init__(self, modules=None, name=None):
+        if modules and name:
+            log(modules, name)
+
+    def print(self, *args):
+        for arg in args:
+            pprint.pprint(arg)
+
+        print()
