@@ -1,0 +1,67 @@
+from logging import getLogger
+
+from django.db import models
+
+from pulpcore.plugin.models import Content, ContentArtifact, Remote, Publisher
+
+
+log = getLogger(__name__)
+
+
+class FileContent(Content):
+    """
+    The "file" content type.
+
+    Content of this type represents a collection of 0 or more files uniquely
+    identified by path and SHA256 digest.
+
+    Fields:
+        relative_path (str): The file relative path.
+        digest (str): The SHA256 HEX digest.
+    """
+
+    TYPE = 'file'
+
+    relative_path = models.TextField(null=False)
+    digest = models.TextField(null=False)
+
+    @property
+    def artifact(self):
+        """
+        Return the artifact id (there is only one for this content type).
+        """
+        return self._artifacts.get().pk
+
+    @artifact.setter
+    def artifact(self, artifact):
+        """
+        Set the artifact for this FileContent.
+        """
+        if self.pk:
+            ca = ContentArtifact(artifact=artifact,
+                                 content=self,
+                                 relative_path=self.relative_path)
+            ca.save()
+
+    class Meta:
+        unique_together = (
+            'relative_path',
+            'digest'
+        )
+
+
+class FileRemote(Remote):
+    """
+    Remote for "file" content.
+    """
+
+    TYPE = 'file'
+
+
+class FilePublisher(Publisher):
+    """
+    Publisher for "file" content.
+    """
+
+    TYPE = 'file'
+    manifest = models.TextField()
