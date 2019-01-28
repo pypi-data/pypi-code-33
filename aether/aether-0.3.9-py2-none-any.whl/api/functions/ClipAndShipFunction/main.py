@@ -1,0 +1,5 @@
+
+
+
+def ClipAndShipFunction(request):
+    pass
