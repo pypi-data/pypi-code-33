@@ -1,0 +1,1 @@
+from markdown.extensions.wikilinks import WikiLinkExtension
