@@ -1,0 +1,11 @@
+# ---------------------------------------------------------
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the MIT License. See License.txt in the project root for license information.
+# ---------------------------------------------------------
+
+"""Initialize _restclient contracts"""
+from .events import (create_heartbeat_event, create_start_event,
+                     create_failed_event, create_completed_event, create_canceled_event)
+
+__all__ = ['create_heartbeat_event', 'create_start_event',
+           'create_failed_event', 'create_completed_event', 'create_canceled_event']
