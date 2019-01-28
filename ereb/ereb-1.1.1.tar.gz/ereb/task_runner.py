@@ -1,0 +1,56 @@
+import logging
+
+from ereb.task_run import TaskRun
+from ereb.aa_subprocess import AASubprocess
+from datadog import statsd
+
+
+class TaskRunner():
+
+    def __init__(self, task_id, history_storage, notifier, on_error_callback, datadog_config):
+        self.task_id = task_id
+        self.history_storage = history_storage
+        self.notifier = notifier
+        self.on_error_callback = on_error_callback
+        self.datadog_config = datadog_config
+
+    def run_task(self, cmd, timeout=-1, fails_before_notify=0):
+        logging.info("Runner started, %s with timeout %s", self.task_id, timeout)
+        logging.info("Command: %s" % cmd)
+        timeout = int(timeout)
+
+        if not self.history_storage.task_valid_to_run(self.task_id):
+            raise FileExistsError('%s task is in progress' % self.task_id)
+
+        self.task_run = TaskRun(self.task_id)
+        self.fails_before_notify = int(fails_before_notify)
+        self.history_storage.prepare_task_run(self.task_run)
+        self.history_storage.update_state_for_task_run(self.task_run)
+
+        self.proc = AASubprocess(cmd, timeout, self.chunk_stdout, self.chunk_stderr,
+                                 self.done_callback, kill_on_timeout=True)
+        self.task_run.state['pid'] = self.proc.pid
+        self.history_storage.update_state_for_task_run(self.task_run)
+
+    def chunk_stdout(self, data):
+        self.task_run.stdout += data.decode()
+        self.history_storage.update_stdout_for_task_run_id(self.task_run)
+
+    def chunk_stderr(self, data):
+        self.task_run.stderr += data.decode()
+        self.history_storage.update_stderr_for_task_run_id(self.task_run)
+
+    def done_callback(self, return_code, expired):
+        self.task_run.state['exit_code'] = return_code
+        self.task_run.finalize()
+        self.history_storage.update_state_for_task_run(self.task_run)
+
+        if self.datadog_config['enabled']:
+            task_time = (self.task_run.finished_at - self.task_run.started_at).seconds
+            self.datadog_config['statsd_client'].gauge('ereb.%s' % self.task_id, task_time, tags=[self.datadog_config['tag']])
+
+        if return_code != 0:
+            last_fails = self.history_storage.last_fails(self.task_id)
+            if self.fails_before_notify == 0 or (last_fails % self.fails_before_notify == 0):
+                self.on_error_callback(self.task_id, return_code)
+                self.notifier.send_failed_task_run(self.task_run, last_fails)
