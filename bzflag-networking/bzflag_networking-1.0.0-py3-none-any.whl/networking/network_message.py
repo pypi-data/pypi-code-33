@@ -1,0 +1,63 @@
+from enum import Enum
+
+
+def code_from_chars(code: str) -> int:
+    return int.from_bytes(str.encode(code), byteorder='big')
+
+
+def chars_from_code(chars: int) -> str:
+    return chars.to_bytes(2, byteorder='big').decode('utf-8')
+
+
+class NetworkMessage(Enum):
+    Null = 0
+    Accept = code_from_chars('ac')
+    AdminInfo = code_from_chars('ai')
+    Alive = code_from_chars('al')
+    AddPlayer = code_from_chars('ap')
+    AutoPilot = code_from_chars('au')
+    CaptureFlag = code_from_chars('cf')
+    CustomSound = code_from_chars('cs')
+    CacheURL = code_from_chars('cu')
+    DropFlag = code_from_chars('df')
+    Enter = code_from_chars('en')
+    Exit = code_from_chars('ex')
+    FlagType = code_from_chars('ft')
+    FlagUpdate = code_from_chars('fu')
+    FetchResources = code_from_chars('fr')
+    GrabFlag = code_from_chars('gf')
+    GMUpdate = code_from_chars('gm')
+    GetWorld = code_from_chars('gw')
+    GameSettings = code_from_chars('gs')
+    GameTime = code_from_chars('gt')
+    Handicap = code_from_chars('hc')
+    Killed = code_from_chars('kl')
+    LagState = code_from_chars('ls')
+    Message = code_from_chars('mg')
+    NearFlag = code_from_chars('Nf')
+    NewRabbit = code_from_chars('nR')
+    NegotiateFlags = code_from_chars('nf')
+    Pause = code_from_chars('pa')
+    PlayerInfo = code_from_chars('pb')
+    PlayerUpdate = code_from_chars('pu')
+    PlayerUpdateSmall = code_from_chars('ps')
+    QueryGame = code_from_chars('qg')
+    QueryPlayers = code_from_chars('qp')
+    Reject = code_from_chars('rj')
+    RemovePlayer = code_from_chars('rp')
+    ReplayReset = code_from_chars('rr')
+    ShotBegin = code_from_chars('sb')
+    Score = code_from_chars('sc')
+    ScoreOver = code_from_chars('so')
+    ShotEnd = code_from_chars('se')
+    SuperKill = code_from_chars('sk')
+    SetVar = code_from_chars('sv')
+    TimeUpdate = code_from_chars('to')
+    Teleport = code_from_chars('tp')
+    TransferFlag = code_from_chars('tf')
+    TeamUpdate = code_from_chars('tu')
+    WantWHash = code_from_chars('wh')
+    WantSettings = code_from_chars('ws')
+    PortalAdd = code_from_chars('Pa')
+    PortalRemove = code_from_chars('Pr')
+    PortalUpdate = code_from_chars('Pu')
