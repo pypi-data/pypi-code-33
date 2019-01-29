@@ -1,0 +1,10 @@
+# -*- coding: utf-8 -*-
+# Copyright 2017 Martin Picard
+# MIT License
+
+
+STATUS_STARTING = 'STARTING'
+STATUS_UP = 'UP'
+STATUS_DOWN = 'DOWN'
+STATUS_OUT_OF_SERVICE = 'OUT_OF_SERVICE'
+STATUS_UNKNOWN = "UNKNOWN"
