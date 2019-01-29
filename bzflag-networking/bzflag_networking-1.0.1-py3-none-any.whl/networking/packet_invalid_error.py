@@ -1,0 +1,2 @@
+class PacketInvalidError(BaseException):
+    pass
