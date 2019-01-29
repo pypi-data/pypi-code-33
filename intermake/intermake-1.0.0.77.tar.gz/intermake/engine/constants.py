@@ -1,0 +1,40 @@
+from colorama import Back, Fore, Style
+
+
+__author__ = "Martin Rusilowicz"
+
+
+PLUGIN_TYPE_COMMAND = "command"
+EXPLORER_KEY_PLUGINS = "commands"
+EXPLORER_KEY_RESULTS = "Results"
+VIRTUAL_FOLDER = "SPECIAL"
+
+RES_FOLDER = "folder"
+RES_UNKNOWN = "unknown"
+RES_COMMAND = "command"
+
+INFOLINE_MESSAGE = Back.GREEN + Fore.WHITE + "MSG" + Style.RESET_ALL + " "
+INFOLINE_ERROR = Back.RED + Fore.WHITE + "ERR" + Style.RESET_ALL + " "
+INFOLINE_WARNING = Back.YELLOW + Fore.RED + "WRN" + Style.RESET_ALL + " "
+INFOLINE_INFORMATION = Back.BLUE + Fore.WHITE + "INF" + Style.RESET_ALL + " "
+INFOLINE_PROGRESS = Back.GREEN + Fore.BLUE + "PRG" + Style.RESET_ALL + " "
+INFOLINE_ECHO = Fore.BLACK + Back.CYAN + Style.DIM + "ECO" + Style.RESET_ALL + " "
+INFOLINE_SYSTEM = Back.YELLOW + Fore.WHITE + "SYS" + Style.RESET_ALL + " "
+INFOLINE_EXTERNAL_STDOUT = Back.WHITE + Fore.BLUE + "APP" + Style.RESET_ALL + " "
+INFOLINE_EXTERNAL_STDERR = Back.WHITE + Fore.RED + "APE" + Style.RESET_ALL + " "
+INFOLINE_VERBOSE = Back.BLUE + Fore.CYAN + "VER" + Style.RESET_ALL + " "
+
+INFOLINE_MESSAGE_CONTINUED = Back.GREEN + Fore.WHITE + "   " + Style.RESET_ALL + " "
+INFOLINE_WARNING_CONTINUED = Back.YELLOW + Fore.RED + "   " + Style.RESET_ALL + " "
+INFOLINE_INFORMATION_CONTINUED = Back.BLUE + Fore.WHITE + "   " + Style.RESET_ALL + " "
+INFOLINE_PROGRESS_CONTINUED = Back.GREEN + Fore.BLUE + "   " + Style.RESET_ALL + " "
+INFOLINE_ECHO_CONTINUED = Fore.BLACK + Back.CYAN + Style.DIM + "   " + Style.RESET_ALL + " "
+INFOLINE_SYSTEM_CONTINUED = Back.YELLOW + Fore.WHITE + "   " + Style.RESET_ALL + " "
+INFOLINE_ERROR_CONTINUED = Back.RED + Fore.WHITE + "   " + Style.RESET_ALL + " "
+INFOLINE_EXTERNAL_STDOUT_CONTINUED = Back.WHITE + Fore.BLUE + " . " + Style.RESET_ALL + " "
+INFOLINE_EXTERNAL_STDERR_CONTINUED = Back.WHITE + Fore.RED + " . " + Style.RESET_ALL + " "
+INFOLINE_VERBOSE_CONTINUED = Back.BLUE + Fore.CYAN + "   " + Style.RESET_ALL + " "
+
+FOLDER_SETTINGS = "settings"
+FOLDER_TEMPORARY = "temporary"
+FOLDER_PLUGIN_DATA = "data"
