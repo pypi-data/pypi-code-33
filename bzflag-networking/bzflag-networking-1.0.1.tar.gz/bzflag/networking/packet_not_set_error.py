@@ -1,0 +1,2 @@
+class PacketNotSetError(BaseException):
+    pass
