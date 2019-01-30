@@ -1,0 +1,128 @@
+import importlib
+import logging
+import time
+from collections import defaultdict
+from concurrent import futures
+from functools import partial
+from typing import Any, Callable, DefaultDict, Dict, List, Type, Union
+
+import grpc
+
+from .blueprint import Blueprint, Context
+from .config import default_config
+from .orm import Message
+from .utils import generate_proto_file
+
+_ONE_DAY_IN_SECONDS = 60 * 60 * 24
+
+
+class Server(Blueprint):
+    def __init__(
+            self,
+            name: str,
+            file_name: str = '',
+            pre_processes: List[Callable[[Message, Context], Message]] = None,
+            post_processes: List[Callable[[Message, Context], Message]] = None,
+            config: Union[str, Type] = ''):
+        """The Server object implements a base application and acts as the central
+        object. It is passed the name of gRPC Service of the application. Once it is
+        created it will act as a central registry for the gRPC Service.
+
+        Usually you create a :class:`Server` instance in your main module or
+        in the :file:`__init__.py` file of your package like this::
+
+            from grpcalchemy import Server
+            app = Server('server')
+
+        :param str name:
+        :param str file_name:
+        :param List[Callable[[Message, Context], Message]] pre_processes:
+        :param List[Callable[[Message, Context], Message]] post_processes:
+        :param Union[str, Type] config:
+
+        .. versionadded:: 0.2.0
+        """
+        super().__init__(
+            name=name,
+            file_name=file_name,
+            pre_processes=pre_processes,
+            post_processes=post_processes)
+
+        #: The configuration dictionary as :class:`Config`.  This behaves
+        #: exactly like a regular dictionary but supports additional methods
+        #: to load a config from files.
+        self.config = default_config
+
+        if config:
+            self.config.from_object(config)
+
+        self.server = grpc.server(
+            futures.ThreadPoolExecutor(max_workers=self.config["MAX_WORKERS"]))
+
+        #: all the attached blueprints in a dictionary by name.
+        #:
+        #: .. versionadded:: 0.1.6
+        self.blueprints: Dict[str, Blueprint] = {}
+
+        #: all the listened event in a dictionary by name.
+        #: And the event will be called according to the name:
+        #: ``before_server_start``
+        #: ``after_server_stop``
+        #:
+        #: .. versionadded:: 0.1.6
+        self.listeners: DefaultDict[str, List[
+            Callable[[Server], None]]] = defaultdict(list)
+
+        #: init logger
+        self.logger = logging.getLogger()
+        self.logger.setLevel(logging.DEBUG)
+        self.logger.addHandler(logging.StreamHandler())
+
+        self.register_blueprint(self)
+
+    def register_blueprint(self, bp: Blueprint):
+        #: all the gRPC service register in a dictionary by name.
+        #:
+        #: .. versionadded:: 0.2.0
+        self.blueprints[bp.name] = bp
+
+    def run(self, port: int = 50051, test=False):
+        generate_proto_file()
+        for name, bp in self.blueprints.items():
+            grpc_pb2_module = importlib.import_module(
+                f".{bp.file_name}_pb2_grpc", self.config["TEMPLATE_PATH"])
+            getattr(grpc_pb2_module,
+                    f"add_{bp.file_name}Servicer_to_server")(bp, self.server)
+
+        for func in self.listeners["before_server_start"]:
+            func(self)
+
+        self.server.add_insecure_port(f'[::]:{port}')
+        self.server.start()
+
+        self.logger.info(f"gRPC server is running on 0.0.0.0:{port}")
+
+        if not test:
+            try:
+                while True:
+                    time.sleep(_ONE_DAY_IN_SECONDS)
+            finally:
+                self.server.stop(0)
+                for func in self.listeners["after_server_stop"]:
+                    func(self)
+
+    def listener(self,
+                 event: str,
+                 listener: Union[Callable[[Any], None], None] = None
+                 ) -> Union[partial, Callable[[Any], None]]:
+        """
+        Create a listener from a decorated function.
+
+        :param event: event to listen to
+        """
+        if listener is None:
+            return partial(self.listener, event)
+
+        self.listeners[event].append(listener)
+
+        return listener
