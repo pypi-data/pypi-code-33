@@ -1,0 +1,84 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+#
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+from aliyunsdkcore.request import RpcRequest
+class InnerFixRegionRequest(RpcRequest):
+
+	def __init__(self):
+		RpcRequest.__init__(self, 'Tag-Inner', '2018-11-09', 'InnerFixRegion', 'tag', 'innerAPI')
+
+	def get_ResourceOwnerId(self):
+		return self.get_query_params().get('ResourceOwnerId')
+
+	def set_ResourceOwnerId(self,ResourceOwnerId):
+		self.add_query_param('ResourceOwnerId',ResourceOwnerId)
+
+	def get_FixRegionId(self):
+		return self.get_query_params().get('FixRegionId')
+
+	def set_FixRegionId(self,FixRegionId):
+		self.add_query_param('FixRegionId',FixRegionId)
+
+	def get_TagOwnerUid(self):
+		return self.get_query_params().get('TagOwnerUid')
+
+	def set_TagOwnerUid(self,TagOwnerUid):
+		self.add_query_param('TagOwnerUid',TagOwnerUid)
+
+	def get_ResourceRelId(self):
+		return self.get_query_params().get('ResourceRelId')
+
+	def set_ResourceRelId(self,ResourceRelId):
+		self.add_query_param('ResourceRelId',ResourceRelId)
+
+	def get_TagOwnerBid(self):
+		return self.get_query_params().get('TagOwnerBid')
+
+	def set_TagOwnerBid(self,TagOwnerBid):
+		self.add_query_param('TagOwnerBid',TagOwnerBid)
+
+	def get_ResourceOwnerAccount(self):
+		return self.get_query_params().get('ResourceOwnerAccount')
+
+	def set_ResourceOwnerAccount(self,ResourceOwnerAccount):
+		self.add_query_param('ResourceOwnerAccount',ResourceOwnerAccount)
+
+	def get_OwnerAccount(self):
+		return self.get_query_params().get('OwnerAccount')
+
+	def set_OwnerAccount(self,OwnerAccount):
+		self.add_query_param('OwnerAccount',OwnerAccount)
+
+	def get_OwnerId(self):
+		return self.get_query_params().get('OwnerId')
+
+	def set_OwnerId(self,OwnerId):
+		self.add_query_param('OwnerId',OwnerId)
+
+	def get_TagValueId(self):
+		return self.get_query_params().get('TagValueId')
+
+	def set_TagValueId(self,TagValueId):
+		self.add_query_param('TagValueId',TagValueId)
+
+	def get_TagKeyId(self):
+		return self.get_query_params().get('TagKeyId')
+
+	def set_TagKeyId(self,TagKeyId):
+		self.add_query_param('TagKeyId',TagKeyId)
