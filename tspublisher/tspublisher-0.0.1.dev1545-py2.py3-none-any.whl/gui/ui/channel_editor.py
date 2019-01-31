@@ -1,0 +1,93 @@
+# -*- coding: utf-8 -*-
+
+# Form implementation generated from reading ui file 'C:\Users\andrej.perfilov\git\pipeline\lib\python\ts_publisher\src\publisher\gui\\resources\channel_editor.ui'
+#
+# Created: Wed Jan 30 18:09:06 2019
+#      by: pyside-uic 0.2.15 running on PySide 1.2.4
+#
+# WARNING! All changes made in this file will be lost!
+
+from PySide import QtCore, QtGui
+
+class Ui_channel_editor(object):
+    def setupUi(self, channel_editor):
+        channel_editor.setObjectName("channel_editor")
+        channel_editor.resize(536, 453)
+        self.verticalLayout_2 = QtGui.QVBoxLayout(channel_editor)
+        self.verticalLayout_2.setObjectName("verticalLayout_2")
+        self.line = QtGui.QFrame(channel_editor)
+        self.line.setFrameShape(QtGui.QFrame.HLine)
+        self.line.setFrameShadow(QtGui.QFrame.Sunken)
+        self.line.setObjectName("line")
+        self.verticalLayout_2.addWidget(self.line)
+        self.channel_tbl = QtGui.QTableView(channel_editor)
+        self.channel_tbl.setContextMenuPolicy(QtCore.Qt.ActionsContextMenu)
+        self.channel_tbl.setAlternatingRowColors(True)
+        self.channel_tbl.setSelectionMode(QtGui.QAbstractItemView.SingleSelection)
+        self.channel_tbl.setSortingEnabled(True)
+        self.channel_tbl.setObjectName("channel_tbl")
+        self.channel_tbl.horizontalHeader().setStretchLastSection(False)
+        self.channel_tbl.verticalHeader().setVisible(False)
+        self.verticalLayout_2.addWidget(self.channel_tbl)
+        self.display_images = QtGui.QCheckBox(channel_editor)
+        self.display_images.setLayoutDirection(QtCore.Qt.LeftToRight)
+        self.display_images.setObjectName("display_images")
+        self.verticalLayout_2.addWidget(self.display_images)
+        self.badge_banner_widget = QtGui.QWidget(channel_editor)
+        self.badge_banner_widget.setObjectName("badge_banner_widget")
+        self.gridLayout = QtGui.QGridLayout(self.badge_banner_widget)
+        self.gridLayout.setContentsMargins(0, 0, 0, 0)
+        self.gridLayout.setContentsMargins(0, 0, 0, 0)
+        self.gridLayout.setObjectName("gridLayout")
+        self.badge = QtGui.QGraphicsView(self.badge_banner_widget)
+        self.badge.setObjectName("badge")
+        self.gridLayout.addWidget(self.badge, 1, 0, 1, 1)
+        self.banner = QtGui.QGraphicsView(self.badge_banner_widget)
+        self.banner.setObjectName("banner")
+        self.gridLayout.addWidget(self.banner, 1, 1, 1, 1)
+        self.label = QtGui.QLabel(self.badge_banner_widget)
+        self.label.setObjectName("label")
+        self.gridLayout.addWidget(self.label, 0, 0, 1, 1)
+        self.label_3 = QtGui.QLabel(self.badge_banner_widget)
+        self.label_3.setObjectName("label_3")
+        self.gridLayout.addWidget(self.label_3, 0, 1, 1, 1)
+        self.verticalLayout_2.addWidget(self.badge_banner_widget)
+        self.formLayout = QtGui.QFormLayout()
+        self.formLayout.setFieldGrowthPolicy(QtGui.QFormLayout.AllNonFixedFieldsGrow)
+        self.formLayout.setObjectName("formLayout")
+        self.label_2 = QtGui.QLabel(channel_editor)
+        self.label_2.setObjectName("label_2")
+        self.formLayout.setWidget(0, QtGui.QFormLayout.LabelRole, self.label_2)
+        self.msg = QtGui.QPlainTextEdit(channel_editor)
+        sizePolicy = QtGui.QSizePolicy(QtGui.QSizePolicy.Expanding, QtGui.QSizePolicy.Fixed)
+        sizePolicy.setHorizontalStretch(0)
+        sizePolicy.setVerticalStretch(0)
+        sizePolicy.setHeightForWidth(self.msg.sizePolicy().hasHeightForWidth())
+        self.msg.setSizePolicy(sizePolicy)
+        self.msg.setMaximumSize(QtCore.QSize(16777215, 50))
+        self.msg.setObjectName("msg")
+        self.formLayout.setWidget(0, QtGui.QFormLayout.FieldRole, self.msg)
+        self.verticalLayout_2.addLayout(self.formLayout)
+        self.submit_btn = QtGui.QPushButton(channel_editor)
+        self.submit_btn.setObjectName("submit_btn")
+        self.verticalLayout_2.addWidget(self.submit_btn)
+        self.add_row = QtGui.QAction(channel_editor)
+        self.add_row.setObjectName("add_row")
+        self.delete_row = QtGui.QAction(channel_editor)
+        self.delete_row.setObjectName("delete_row")
+
+        self.retranslateUi(channel_editor)
+        QtCore.QMetaObject.connectSlotsByName(channel_editor)
+        channel_editor.setTabOrder(self.channel_tbl, self.msg)
+        channel_editor.setTabOrder(self.msg, self.submit_btn)
+
+    def retranslateUi(self, channel_editor):
+        channel_editor.setWindowTitle(QtGui.QApplication.translate("channel_editor", "Channel Editor", None, QtGui.QApplication.UnicodeUTF8))
+        self.display_images.setText(QtGui.QApplication.translate("channel_editor", "Display Images", None, QtGui.QApplication.UnicodeUTF8))
+        self.label.setText(QtGui.QApplication.translate("channel_editor", "Badge", None, QtGui.QApplication.UnicodeUTF8))
+        self.label_3.setText(QtGui.QApplication.translate("channel_editor", "Banner", None, QtGui.QApplication.UnicodeUTF8))
+        self.label_2.setText(QtGui.QApplication.translate("channel_editor", "Comment", None, QtGui.QApplication.UnicodeUTF8))
+        self.submit_btn.setText(QtGui.QApplication.translate("channel_editor", "Save Changes", None, QtGui.QApplication.UnicodeUTF8))
+        self.add_row.setText(QtGui.QApplication.translate("channel_editor", "Add Row", None, QtGui.QApplication.UnicodeUTF8))
+        self.delete_row.setText(QtGui.QApplication.translate("channel_editor", "Delete Row", None, QtGui.QApplication.UnicodeUTF8))
+
