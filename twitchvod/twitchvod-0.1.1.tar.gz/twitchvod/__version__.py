@@ -1,0 +1,10 @@
+"""twitchvod version information."""
+
+__title__ = "twitchvod"
+__description__ = "Fetch Twitch VOD MPEG-2 Stream Information"
+__url__ = "https://github.com/nomadmtb/twitchvod"
+__version__ = "0.1.1"
+__author__ = "Kyle Luce <nomadmtb>"
+__author_email__ = "nomadmtb@users.noreply.github.com"
+__license__ = "MIT License"
+__copyright__ = "Copyright (c) 2019 nomadmtb"
