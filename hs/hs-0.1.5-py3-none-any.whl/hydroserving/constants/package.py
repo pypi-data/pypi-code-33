@@ -1,0 +1,3 @@
+TARGET_FOLDER = ".hs"
+PACKAGE_FILES_DIR = "files"
+PACKAGE_CONTRACT_FILENAME = "contract.protobin"
