@@ -1,0 +1,2 @@
+
+PJT_NAME = 'iAI'
