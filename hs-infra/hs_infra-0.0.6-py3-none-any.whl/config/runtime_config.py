@@ -1,0 +1,2 @@
+class BaseRuntimeConfig:
+    pass
