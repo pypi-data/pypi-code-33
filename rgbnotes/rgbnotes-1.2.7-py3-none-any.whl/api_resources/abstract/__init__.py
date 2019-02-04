@@ -1,0 +1,10 @@
+from __future__ import absolute_import, division, print_function
+
+from rgbnotes.api_resources.abstract.api_resource import APIResource
+from rgbnotes.api_resources.abstract.createable_api_resource import CreateableAPIResource
+from rgbnotes.api_resources.abstract.deletable_api_resource import DeletableAPIResource
+from rgbnotes.api_resources.abstract.listable_api_resource import ListableAPIResource
+from rgbnotes.api_resources.abstract.retrievable_api_resource import RetrievableAPIResource
+from rgbnotes.api_resources.abstract.updateable_api_resource import UpdateableAPIResource
+
+
