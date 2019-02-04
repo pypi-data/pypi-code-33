@@ -1,0 +1,2 @@
+class AutoConfigurationFailedException(Exception):
+    pass
