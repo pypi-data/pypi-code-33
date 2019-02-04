@@ -1,0 +1,16 @@
+""" Generic IOS-XE Settings. """
+
+__copyright__ = "# Copyright (c) 2016 by cisco Systems, Inc. All rights reserved."
+__author__ = "Myles Dear <mdear@cisco.com>"
+
+from unicon.plugins.generic.settings import GenericSettings
+
+class IosXESettings(GenericSettings):
+
+    def __init__(self):
+        super().__init__()
+
+        # A single cycle of retries wasn't enough to recover an iosxe device
+        # just rebooted after a "write erase".
+        self.PROMPT_RECOVERY_RETRIES = 2
+
