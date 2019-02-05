@@ -1,0 +1,26 @@
+from abc import ABCMeta, abstractmethod
+
+
+class CliService(object):
+    __metaclass__ = ABCMeta
+
+    def __init__(self, session, logger):
+        """
+        :type session: cloudshell.cli.session.session.Session
+        :type logger: logging.Logger
+        """
+        self.session = session
+        self._logger = logger
+
+    @abstractmethod
+    def send_command(self, command, expected_string=None, action_map=None, error_map=None, logger=None, *args,
+                     **kwargs):
+        pass
+
+    @abstractmethod
+    def enter_mode(self, command_mode):
+        pass
+
+    @abstractmethod
+    def reconnect(self, timeout=None):
+        pass
