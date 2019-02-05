@@ -1,0 +1,1 @@
+from perfect_jsonschema.perfect_jsonschema import check
