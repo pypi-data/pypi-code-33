@@ -1,0 +1,3 @@
+import deepclas4bio.listMethods
+import deepclas4bio.predict
+import deepclas4bio.evaluate
