@@ -1,0 +1,222 @@
+"""
+Special ANSI codes.
+"""
+
+# Special
+RESET = "\033[0m"
+
+# Styles
+BOLD = "\033[1m"
+DIM = "\033[2m"
+ITALIC = "\033[3m"
+UNDERLINE = "\033[4m"
+BLINK = "\033[5m"
+INVERSE = "\033[7m"
+CONCEAL = "\033[8m"
+STRIKETHROUGH = "\033[9m"
+
+NORMAL = "\033[22m"
+BOLD_OFF = "\033[22m"
+DIM_OFF = "\033[22m"
+ITALIC_OFF = "\033[23m"
+UNDERLINE_OFF = "\033[24m"
+BLINK_OFF = "\033[25m"
+INVERSE_OFF = "\033[27m"
+CONCEAL_OFF = "\033[28m"
+STRIKETHROUGH_OFF = "\033[29m"
+
+# Fonts (none of these work on iTerm2)
+FONT_0 = "\033[10m"
+FONT_1 = "\033[11m"
+FONT_2 = "\033[12m"
+FONT_3 = "\033[13m"
+FONT_4 = "\033[14m"
+FONT_5 = "\033[15m"
+FONT_6 = "\033[16m"
+FONT_7 = "\033[17m"
+FONT_8 = "\033[18m"
+FONT_9 = "\033[19m"
+FRAKTUR = "\033[20m"
+
+# Codes
+CODE_FORE_BLACK = 30
+CODE_FORE_RED = 31
+CODE_FORE_GREEN = 32
+CODE_FORE_YELLOW = 33
+CODE_FORE_BLUE = 34
+CODE_FORE_MAGENTA = 35
+CODE_FORE_CYAN = 36
+CODE_FORE_WHITE = 37
+CODE_FORE_RESET = 39
+CODE_FORE_LIGHT_BLACK = 90
+CODE_FORE_LIGHT_RED = 91
+CODE_FORE_LIGHT_GREEN = 92
+CODE_FORE_LIGHT_YELLOW = 93
+CODE_FORE_LIGHT_BLUE = 94
+CODE_FORE_LIGHT_MAGENTA = 95
+CODE_FORE_LIGHT_CYAN = 96
+CODE_FORE_LIGHT_WHITE = 97
+CODE_BACK_BLACK = 40
+CODE_BACK_RED = 41
+CODE_BACK_GREEN = 42
+CODE_BACK_YELLOW = 43
+CODE_BACK_BLUE = 44
+CODE_BACK_MAGENTA = 45
+CODE_BACK_CYAN = 46
+CODE_BACK_WHITE = 47
+CODE_BACK_RESET = 49
+CODE_BACK_LIGHT_BLACK = 100
+CODE_BACK_LIGHT_RED = 101
+CODE_BACK_LIGHT_GREEN = 102
+CODE_BACK_LIGHT_YELLOW = 103
+CODE_BACK_LIGHT_BLUE = 104
+CODE_BACK_LIGHT_MAGENTA = 105
+CODE_BACK_LIGHT_CYAN = 106
+CODE_BACK_LIGHT_WHITE = 107
+CODE_STYLE_RESET_ALL = 0
+CODE_STYLE_BRIGHT = 1
+CODE_STYLE_DIM = 2
+CODE_STYLE_NORMAL = 22
+
+# Internal codes
+CODE_INTERNAL_DEFAULT = -1
+CODE_INTERNAL_QUOTE_START = -2
+CODE_INTERNAL_QUOTE_END = -3
+CODE_INTERNAL_TABLE_START = -4
+CODE_INTERNAL_TABLE_END = -5
+
+# Foreground
+FORE_BLACK = "\033[30m"
+FORE_RED = "\033[31m"
+FORE_GREEN = "\033[32m"
+FORE_YELLOW = "\033[33m"
+FORE_BLUE = "\033[34m"
+FORE_MAGENTA = "\033[35m"
+FORE_CYAN = "\033[36m"
+FORE_WHITE = "\033[37m"
+FORE_RESET = "\033[39m"
+FORE_BRIGHT_BLACK = "\033[90m"
+FORE_BRIGHT_RED = "\033[91m"
+FORE_BRIGHT_GREEN = "\033[92m"
+FORE_BRIGHT_YELLOW = "\033[93m"
+FORE_BRIGHT_BLUE = "\033[94m"
+FORE_BRIGHT_MAGENTA = "\033[95m"
+FORE_BRIGHT_CYAN = "\033[96m"
+FORE_BRIGHT_WHITE = "\033[97m"
+
+# Background
+BACK_BLACK = "\033[40m"
+BACK_RED = "\033[41m"
+BACK_GREEN = "\033[42m"
+BACK_YELLOW = "\033[43m"
+BACK_BLUE = "\033[44m"
+BACK_MAGENTA = "\033[45m"
+BACK_CYAN = "\033[46m"
+BACK_WHITE = "\033[47m"
+BACK_RESET = "\033[49m"
+BACK_LIGHT_BLACK = "\033[100m"
+BACK_LIGHT_RED = "\033[101m"
+BACK_LIGHT_GREEN = "\033[102m"
+BACK_LIGHT_YELLOW = "\033[103m"
+BACK_LIGHT_BLUE = "\033[104m"
+BACK_LIGHT_MAGENTA = "\033[105m"
+BACK_LIGHT_CYAN = "\033[106m"
+BACK_LIGHT_WHITE = "\033[107m"
+
+# "Bright" for synonomy with colourama, though these colours are typically lighter rather than brighter
+BACK_BRIGHT_BLACK = "\033[100m"
+BACK_BRIGHT_RED = "\033[101m"
+BACK_BRIGHT_GREEN = "\033[102m"
+BACK_BRIGHT_YELLOW = "\033[103m"
+BACK_BRIGHT_BLUE = "\033[104m"
+BACK_BRIGHT_MAGENTA = "\033[105m"
+BACK_BRIGHT_CYAN = "\033[106m"
+BACK_BRIGHT_WHITE = "\033[107m"
+
+
+# 24-bit colours
+def fore( r, g, b ):
+    return "\033[38;2;" + str( r ) + ";" + str( g ) + ";" + str( b ) + "m"
+
+
+def back( r, g, b ):
+    return "\033[48;2;" + str( r ) + ";" + str( g ) + ";" + str( b ) + "m"
+
+
+# Text
+FR = FORE_RED
+FG = FORE_GREEN
+FB = FORE_BLUE
+FC = FORE_CYAN
+FY = FORE_YELLOW
+FM = FORE_MAGENTA
+FW = FORE_WHITE
+FK = FORE_BLACK
+
+FBR = FORE_BRIGHT_RED
+FBG = FORE_BRIGHT_GREEN
+FBB = FORE_BRIGHT_BLUE
+FBC = FORE_BRIGHT_CYAN
+FBY = FORE_BRIGHT_YELLOW
+FBM = FORE_BRIGHT_MAGENTA
+FBW = FORE_BRIGHT_WHITE
+FBK = FORE_BRIGHT_BLACK
+
+# Background
+BR = BACK_RED
+BG = BACK_GREEN
+BB = BACK_BLUE
+BC = BACK_CYAN
+BY = BACK_YELLOW
+BM = BACK_MAGENTA
+BW = BACK_WHITE
+BK = BACK_BLACK
+
+BBR = BACK_LIGHT_RED
+BBG = BACK_LIGHT_GREEN
+BBB = BACK_LIGHT_BLUE
+BBC = BACK_LIGHT_CYAN
+BBY = BACK_LIGHT_YELLOW
+BBM = BACK_LIGHT_MAGENTA
+BBW = BACK_LIGHT_WHITE
+BBK = BACK_LIGHT_BLACK
+
+# Styles
+SB = BOLD
+SD = DIM
+SI = ITALIC
+SU = UNDERLINE
+SE = INVERSE
+
+
+class Box:
+    SINGLE: "Box" = None
+    DOUBLE: "Box" = None
+    DOTTED: "Box" = None
+    BOLD: "Box" = None
+    BLANK: "Box" = None
+    ASCII: "Box" = None
+    CURVED: "Box" = None
+    
+    
+    def __init__( self, x ):
+        self.__in = x
+        self.ts, self.bs, self.ls, self.rs, self.tl, self.tr, self.bl, self.br = x
+        self.hr = self.ts
+        self.vr = self.ls
+        self.em = " "
+    
+    
+    def format( self, prefix, suffix ):
+        return Box( "".join( "{}{}{}".format( prefix, char, suffix ) for char in self.__in ) )
+
+
+Box.SINGLE = Box( "──││┌┐└┘" )
+Box.DOUBLE = Box( "══║║╔╗╚╝" )
+Box.DOTTED = Box( "┄┄┆┆┌┐└┘" )
+Box.BOLD = Box( "━━┃┃┏┓┗┛" )
+Box.BLANK = Box( "        " )
+Box.ASCII = Box( r"--||/\\/" )
+Box.CURVED = Box( "──││╭╮╰╯" )
+Box.BLOCK = Box( "▀▄▌▐▛▜▙▟" )
+Box.SOLID = Box( "████████" )
