@@ -1,0 +1,441 @@
+# ----------------------------------------------------------------------------------------------------
+# IBM Confidential
+# OCO Source Materials
+# 5900-A3Q, 5737-J33
+# Copyright IBM Corp. 2018
+# The source code for this program is not published or other-wise divested of its trade 
+# secrets, irrespective of what has been deposited with the U.S.Copyright Office.
+# ----------------------------------------------------------------------------------------------------
+
+import time
+
+import requests
+
+import pandas as pd
+
+from assertions import *
+from ibm_ai_openscale import APIClient, APIClient4ICP
+from ibm_ai_openscale.engines import *
+from ibm_ai_openscale.supporting_classes import PayloadRecord
+from ibm_ai_openscale.supporting_classes.enums import InputDataType, ProblemType
+from preparation_and_cleaning import *
+from ibm_ai_openscale.utils.training_stats import TrainingStats
+
+
+@unittest.skipIf("ICP" in get_env(), "Disabled on ICP...")
+class TestAIOpenScaleClient(unittest.TestCase):
+    deployment_uid = None
+    model_uid = None
+    subscription_uid = None
+    binding_uid = None
+    scoring_url = None
+    labels = None
+    ai_client = None
+    wml_client = None
+    subscription = None
+    test_uid = str(uuid.uuid4())
+    source_uid = None
+    transaction_id = None
+    scoring_records = 10
+    feedback_records = 12
+
+    # Azure configuration
+    credentials = {
+        "client_id": "29f007c5-4c45-4210-8a88-9a40136f0ddd",
+        "client_secret": "e4d8b0fa-73f7-4b77-83a7-0b424d92940f",
+        "subscription_id": "744bca72-2299-451c-b682-ed6fb75fb671",
+        "tenant": "fcf67057-50c9-4ad4-98f3-ffca64add9e9"
+    }
+
+    def score(self, subscription_details):
+        scoring_url = subscription_details['entity']['deployments'][0]['scoring_endpoint']['url']
+
+        data = {
+            "Inputs": {
+                "input1":
+                    [
+                        {
+                            'CheckingStatus': "0_to_200",
+                            'LoanDuration': "31",
+                            'CreditHistory': "credits_paid_to_date",
+                            'LoanPurpose': "other",
+                            'LoanAmount': "1889",
+                            'ExistingSavings': "100_to_500",
+                            'EmploymentDuration': "less_1",
+                            'InstallmentPercent': "3",
+                            'Sex': "female",
+                            'OthersOnLoan': "none",
+                            'CurrentResidenceDuration': "3",
+                            'OwnsProperty': "savings_insurance",
+                            'Age': "32",
+                            'InstallmentPlans': "none",
+                            'Housing': "own",
+                            'ExistingCreditsCount': "1",
+                            'Job': "skilled",
+                            'Dependents': "1",
+                            'Telephone': "none",
+                            'ForeignWorker': "yes",
+                        }
+                    ],
+            },
+            "GlobalParameters": {
+            }
+        }
+
+        body = str.encode(json.dumps(data))
+
+        token = subscription_details['entity']['deployments'][0]['scoring_endpoint']['credentials']['token']
+        headers = subscription_details['entity']['deployments'][0]['scoring_endpoint']['request_headers']
+        headers['Authorization'] = ('Bearer ' + token)
+
+        start_time = time.time()
+        response = requests.post(url=scoring_url, data=body, headers=headers)
+        response_time = time.time() - start_time
+        result = response.json()
+        print('Scoring results: ' + json.dumps(result, indent=2))
+
+        request = {'fields': list(data['Inputs']['input1'][0]),
+                   'values': [list(x.values()) for x in data['Inputs']['input1']]}
+
+        response = {'fields': list(result['Results']['output1'][0]),
+                    'values': [list(x.values()) for x in result['Results']['output1']]}
+
+        print('request: ' + str(request))
+        print('response: ' + str(response))
+
+        self.latest_request = request
+        self.latest_response = response
+        self.latest_response_time = response_time
+
+        return request, response, response_time
+
+    @classmethod
+    def setUpClass(cls):
+        cls.schema = get_schema_name()
+        cls.aios_credentials = get_aios_credentials()
+        cls.database_credentials = get_database_credentials()
+
+        if "ICP" in get_env():
+            cls.ai_client = APIClient4ICP(cls.aios_credentials)
+        else:
+            cls.ai_client = APIClient(cls.aios_credentials)
+
+        prepare_env(cls.ai_client)
+
+    def test_01_setup_data_mart(self):
+        self.ai_client.data_mart.setup(db_credentials=self.database_credentials, schema=self.schema)
+        details = TestAIOpenScaleClient.ai_client.data_mart.get_details()
+        assert_datamart_details(details, schema=self.schema, state='active')
+
+    def test_02_bind_azure(self):
+        TestAIOpenScaleClient.binding_uid = TestAIOpenScaleClient.ai_client.data_mart.bindings.add("Azure ml engine", AzureMachineLearningInstance(self.credentials))
+        print("Binding uid: {}".format(self.binding_uid))
+
+    def test_03_get_binding_details(self):
+        print('Binding details: {}'.format(TestAIOpenScaleClient.ai_client.data_mart.bindings.get_details(TestAIOpenScaleClient.binding_uid)))
+        self.ai_client.data_mart.bindings.list()
+
+    def test_04_get_assets(self):
+        if "ICP" in get_env():
+            TestAIOpenScaleClient.source_uid = '085460ef94636166aea5800e9ea26168'
+        else:
+            assets_uids = TestAIOpenScaleClient.ai_client.data_mart.bindings.get_asset_uids()
+            self.assertGreater(len(assets_uids), 1)
+            print('Assets uids: ' + str(assets_uids))
+
+            TestAIOpenScaleClient.ai_client.data_mart.bindings.list_assets()
+            asset_details = TestAIOpenScaleClient.ai_client.data_mart.bindings.get_asset_details()
+            print('Assets details: ' + str(asset_details))
+
+            for detail in asset_details:
+                if 'GermanCreditRisk.2019.1.9.10.41.58.611' in detail['name']:
+                    TestAIOpenScaleClient.source_uid = detail['source_uid']
+
+            print("Source uid: {}".format(self.source_uid))
+
+            self.assertIsNotNone(TestAIOpenScaleClient.source_uid)
+
+    def test_05_subscribe_azure_asset(self):
+        subscription = TestAIOpenScaleClient.ai_client.data_mart.subscriptions.add(
+            AzureMachineLearningAsset(
+                source_uid=TestAIOpenScaleClient.source_uid,
+                binding_uid=TestAIOpenScaleClient.binding_uid,
+                input_data_type=InputDataType.STRUCTURED,
+                problem_type=ProblemType.BINARY_CLASSIFICATION,
+                label_column='Risk',
+                prediction_column='Scored Labels',
+                probability_column='Scored Probabilities'
+            )
+        )
+
+        TestAIOpenScaleClient.subscription_uid = subscription.uid
+
+    def test_06_get_subscription_details(self):
+        TestAIOpenScaleClient.subscription = TestAIOpenScaleClient.ai_client.data_mart.subscriptions.get(TestAIOpenScaleClient.subscription_uid)
+        details = self.subscription.get_details()
+
+        assert_subscription_details(subscription_details=details, no_deployments=1, text_included='azureml', enabled_monitors=['payload_logging', 'performance_monitoring'])
+
+    def test_07_list_deployments(self):
+        TestAIOpenScaleClient.subscription.list_deployments()
+
+    def test_08_check_default_monitors_enablement(self):
+        subscription_details = TestAIOpenScaleClient.subscription.get_details()
+        assert_monitors_enablement(subscription_details=subscription_details, payload=True, performance=True)
+
+    def test_09_get_payload_logging_details(self):
+        payload_logging_details = self.subscription.payload_logging.get_details()
+        assert_payload_logging_configuration(payload_logging_details=payload_logging_details, dynamic_schema_update=True)
+
+    def test_10_get_performance_monitoring_details(self):
+        performance_monitoring_details = self.subscription.performance_monitoring.get_details()
+        assert_performance_monitoring_configuration(performance_monitoring_details=performance_monitoring_details)
+
+    def test_11_score_model_and_log_payload(self):
+        subscription_details = TestAIOpenScaleClient.subscription.get_details()
+
+        request, response, response_time = self.score(subscription_details)
+        records_list = []
+
+        TestAIOpenScaleClient.scoring_records = 10
+        for i in range(0, self.scoring_records):
+            records_list.append(PayloadRecord(request=request, response=response, response_time=int(response_time)))
+
+        TestAIOpenScaleClient.subscription.payload_logging.store(records=records_list)
+        time.sleep(10)
+
+    def test_12_stats_on_payload_logging_table(self):
+        self.subscription.payload_logging.print_table_schema()
+        self.subscription.payload_logging.show_table()
+        self.subscription.payload_logging.describe_table()
+
+        table_content = self.subscription.payload_logging.get_table_content()
+        assert_payload_logging_pandas_table_content(pandas_table_content=table_content, scoring_records=self.scoring_records)
+
+        python_table_content = self.subscription.payload_logging.get_table_content(format='python')
+        assert_payload_logging_python_table_content(python_table_content=python_table_content, fields=['Scored Probabilities', 'Scored Labels'])
+
+    def test_13_stats_on_performance_monitoring_table(self):
+        self.subscription.performance_monitoring.print_table_schema()
+        self.subscription.performance_monitoring.show_table()
+        self.subscription.performance_monitoring.describe_table()
+
+        performance_table_pandas = self.subscription.performance_monitoring.get_table_content()
+        assert_performance_monitoring_pandas_table_content(pandas_table_content=performance_table_pandas)
+
+        performance_table_python = self.subscription.performance_monitoring.get_table_content(format='python')
+        assert_performance_monitoring_python_table_content(python_table_content=performance_table_python)
+
+    def test_14_setup_quality_monitoring(self):
+        TestAIOpenScaleClient.subscription.quality_monitoring.enable(threshold=0.8, min_records=5)
+
+    def test_15_get_quality_monitoring_details(self):
+        details = TestAIOpenScaleClient.subscription.quality_monitoring.get_details()
+        assert_quality_monitoring_configuration(quality_monitoring_details=details)
+
+    def test_16_send_feedback_data(self):
+        feedback_records = []
+        fields = ['CheckingStatus', 'LoanDuration', 'CreditHistory', 'LoanPurpose', 'LoanAmount', 'ExistingSavings',
+                  'EmploymentDuration', 'InstallmentPercent', 'Sex', 'OthersOnLoan', 'CurrentResidenceDuration',
+                  'OwnsProperty', 'Age', 'InstallmentPlans', 'Housing', 'ExistingCreditsCount', 'Job', 'Dependents',
+                  'Telephone', 'ForeignWorker', 'Risk']
+
+        TestAIOpenScaleClient.feedback_records = 20
+        for i in range(0, self.feedback_records):
+            feedback_records.append(["0_to_200", 18, "outstanding_credit", "car_new", 884, "less_100", "greater_7", 4, "male", "none", 4, "car_other", 36, "bank", "own", 1, "skilled", 2, "yes", "yes", "Risk"])
+
+        self.subscription.feedback_logging.store(feedback_records, fields=fields)
+        time.sleep(20)
+
+    def test_17_stats_on_feedback_logging_table(self):
+        self.subscription.feedback_logging.show_table()
+        self.subscription.feedback_logging.print_table_schema()
+        self.subscription.feedback_logging.describe_table()
+
+        feedback_pd = self.subscription.feedback_logging.get_table_content(format='pandas')
+        assert_feedback_pandas_table_content(pandas_table_content=feedback_pd, feedback_records=self.feedback_records)
+
+    def test_18_run_quality_monitor(self):
+        run_details = TestAIOpenScaleClient.subscription.quality_monitoring.run()
+        self.assertTrue('Prerequisite check' in str(run_details))
+
+        status = run_details['status']
+        id = run_details['id']
+        start_time = time.time()
+        elapsed_time = 0
+
+        while status != 'completed' and elapsed_time < 60:
+            time.sleep(10)
+            run_details = TestAIOpenScaleClient.subscription.quality_monitoring.get_run_details(run_uid=id)
+            status = run_details['status']
+            elapsed_time = time.time() - start_time
+            print("Status: {}\nRun details: {}".format(status, run_details))
+            self.assertNotEqual('failed', status)
+
+        self.assertEqual('completed', status)
+
+    def test_19_stats_on_quality_monitoring_table(self):
+        self.subscription.quality_monitoring.print_table_schema()
+        self.subscription.quality_monitoring.show_table()
+        self.subscription.quality_monitoring.show_table(limit=None)
+        self.subscription.quality_monitoring.describe_table()
+
+        quality_monitoring_table = self.subscription.quality_monitoring.get_table_content()
+        assert_quality_monitoring_pandas_table_content(pandas_table_content=quality_monitoring_table)
+
+        quality_metrics = self.subscription.quality_monitoring.get_table_content(format='python')
+        assert_quality_monitoring_python_table_content(python_table_content=quality_metrics)
+
+    def test_20_setup_explainability(self):
+        data_df = pd.read_csv(
+            "./datasets/German_credit_risk/credit_risk_training.csv",
+            dtype={'LoanDuration': int, 'LoanAmount': int, 'InstallmentPercent': int, 'CurrentResidenceDuration': int,
+                   'Age': int, 'ExistingCreditsCount': int, 'Dependents': int}
+        )
+
+        TestAIOpenScaleClient.training_data_statistics = TrainingStats(
+            data_df,
+            {
+                "model_type": ProblemType.BINARY_CLASSIFICATION,
+                "class_label": 'Risk',
+                "feature_columns": ['CheckingStatus', 'LoanDuration', 'CreditHistory', 'LoanPurpose', 'LoanAmount',
+                                    'ExistingSavings', 'EmploymentDuration', 'InstallmentPercent', 'Sex',
+                                    'OthersOnLoan', 'CurrentResidenceDuration', 'OwnsProperty', 'Age',
+                                    'InstallmentPlans', 'Housing', 'ExistingCreditsCount', 'Job', 'Dependents',
+                                    'Telephone', 'ForeignWorker'],
+                "categorical_columns": ['CheckingStatus', 'CreditHistory', 'LoanPurpose', 'ExistingSavings',
+                                        'EmploymentDuration', 'Sex', 'OthersOnLoan', 'OwnsProperty',
+                                        'InstallmentPlans', 'Housing', 'Job', 'Telephone', 'ForeignWorker'],
+                "fairness_inputs": {
+                    "fairness_attributes": [
+                        {
+                            "majority": [[26, 75]],
+                            "minority": [[18, 25]],
+                            "type": "int",
+                            "feature": "Age",
+                            "threshold": 0.95
+                        },
+                        {
+                            "majority": ["male"],
+                            "minority": ["female"],
+                            "type": "string",
+                            "feature": "Sex",
+                            "threshold": 0.95
+                        }
+                    ],
+                    "min_records": 4,
+                    "favourable_class": ['No Risk'],
+                    "unfavourable_class": ['Risk']
+                }
+            }
+        ).get_training_statistics()
+
+        TestAIOpenScaleClient.subscription.explainability.enable(
+            training_data_statistics=TestAIOpenScaleClient.training_data_statistics
+        )
+
+    def test_21_get_explainability_details(self):
+        details = TestAIOpenScaleClient.subscription.explainability.get_details()
+        assert_explainability_configuration(explainability_details=details)
+
+    def test_22_get_transaction_id(self):
+        python_table_content = self.subscription.payload_logging.get_table_content(format='python')
+        no_payloads = len(python_table_content['values'])
+
+        # select random record from payload table
+        import random
+        random_record = random.randint(0, no_payloads-1)
+        TestAIOpenScaleClient.transaction_id = python_table_content['values'][random_record][0]
+
+        print("Selected trainsaction id: {}".format(self.transaction_id))
+
+    def test_23_run_explainability(self):
+
+        explainability_run = TestAIOpenScaleClient.subscription.explainability.run(
+            transaction_id=self.transaction_id,
+            background_mode=False
+        )
+        assert_explainability_run(explainability_run_details=explainability_run)
+
+    def test_24_stats_on_explainability_table(self):
+        TestAIOpenScaleClient.subscription.explainability.print_table_schema()
+        TestAIOpenScaleClient.subscription.explainability.show_table()
+        TestAIOpenScaleClient.subscription.explainability.describe_table()
+
+        pandas_df = TestAIOpenScaleClient.subscription.explainability.get_table_content()
+        assert_explainability_pandas_table_content(pandas_table_content=pandas_df)
+
+        python_table_content = TestAIOpenScaleClient.subscription.explainability.get_table_content(format='python')
+        assert_explainability_python_table_content(python_table_content=python_table_content)
+
+    def test_25_setup_fairness_monitoring(self):
+
+        TestAIOpenScaleClient.subscription.fairness_monitoring.enable(
+            training_data_statistics=TestAIOpenScaleClient.training_data_statistics
+        )
+
+    def test_26_get_fairness_monitoring_details(self):
+        details = TestAIOpenScaleClient.subscription.fairness_monitoring.get_details()
+        assert_fairness_configuration(fairness_monitoring_details=details)
+
+    def test_27_run_fairness(self):
+        fairness_run = TestAIOpenScaleClient.subscription.fairness_monitoring.run(background_mode=False)
+        assert_fairness_run(fairness_run_details=fairness_run)
+
+    def test_28_stats_on_fairness_monitoring_table(self):
+        TestAIOpenScaleClient.subscription.fairness_monitoring.print_table_schema()
+        TestAIOpenScaleClient.subscription.fairness_monitoring.show_table()
+        TestAIOpenScaleClient.subscription.fairness_monitoring.describe_table()
+
+        pandas_df = TestAIOpenScaleClient.subscription.fairness_monitoring.get_table_content()
+        assert_fairness_monitoring_pandas_table_content(pandas_table_content=pandas_df)
+
+        python_table_content = TestAIOpenScaleClient.subscription.fairness_monitoring.get_table_content(format='python')
+        assert_fairness_monitoring_python_table_content(python_table_content=python_table_content)
+
+    def test_29_get_performance_metrics(self):
+        print(TestAIOpenScaleClient.ai_client.data_mart.get_deployment_metrics())
+        print(TestAIOpenScaleClient.ai_client.data_mart.get_deployment_metrics(deployment_uid=TestAIOpenScaleClient.deployment_uid))
+        print(TestAIOpenScaleClient.ai_client.data_mart.get_deployment_metrics(subscription_uid=TestAIOpenScaleClient.subscription.uid))
+        print(TestAIOpenScaleClient.ai_client.data_mart.get_deployment_metrics(asset_uid=TestAIOpenScaleClient.subscription.source_uid))
+        print(TestAIOpenScaleClient.ai_client.data_mart.get_deployment_metrics(asset_uid=TestAIOpenScaleClient.subscription.source_uid, metric_type='performance'))
+        print(TestAIOpenScaleClient.subscription.performance_monitoring.get_metrics(deployment_uid=TestAIOpenScaleClient.subscription.get_deployment_uids()[0]))
+
+        self.assertTrue(len(TestAIOpenScaleClient.ai_client.data_mart.get_deployment_metrics()['deployment_metrics']) > 0)
+        self.assertTrue(len(TestAIOpenScaleClient.ai_client.data_mart.get_deployment_metrics(deployment_uid=TestAIOpenScaleClient.deployment_uid)['deployment_metrics']) > 0)
+        self.assertTrue(len(TestAIOpenScaleClient.ai_client.data_mart.get_deployment_metrics(subscription_uid=TestAIOpenScaleClient.subscription.uid)['deployment_metrics']) > 0)
+        self.assertTrue(len(TestAIOpenScaleClient.ai_client.data_mart.get_deployment_metrics(asset_uid=TestAIOpenScaleClient.subscription.source_uid)['deployment_metrics']) > 0)
+        self.assertTrue(len(TestAIOpenScaleClient.ai_client.data_mart.get_deployment_metrics(asset_uid=TestAIOpenScaleClient.subscription.source_uid, metric_type='performance')['deployment_metrics'][0]['metrics']) > 0)
+        self.assertTrue(len(TestAIOpenScaleClient.subscription.performance_monitoring.get_metrics(deployment_uid=TestAIOpenScaleClient.subscription.get_deployment_uids()[0])['metrics']) > 0)
+
+    def test_30_get_quality_metrics(self):
+        print(TestAIOpenScaleClient.ai_client.data_mart.get_deployment_metrics())
+        print(TestAIOpenScaleClient.ai_client.data_mart.get_deployment_metrics(deployment_uid=TestAIOpenScaleClient.deployment_uid))
+        print(TestAIOpenScaleClient.ai_client.data_mart.get_deployment_metrics(subscription_uid=TestAIOpenScaleClient.subscription.uid))
+        print(TestAIOpenScaleClient.ai_client.data_mart.get_deployment_metrics(asset_uid=TestAIOpenScaleClient.subscription.source_uid))
+        print(TestAIOpenScaleClient.ai_client.data_mart.get_deployment_metrics(metric_type='quality'))
+
+    def test_31_disable_payload_logging_and_performance_monitoring(self):
+        self.subscription.payload_logging.disable()
+        self.subscription.performance_monitoring.disable()
+        self.subscription.quality_monitoring.disable()
+        self.subscription.explainability.disable()
+        self.subscription.fairness_monitoring.disable()
+
+        subscription_details = self.subscription.get_details()
+        assert_monitors_enablement(subscription_details=subscription_details)
+
+    def test_32_unsubscribe(self):
+        TestAIOpenScaleClient.ai_client.data_mart.subscriptions.delete(TestAIOpenScaleClient.subscription.uid)
+
+    def test_33_unbind(self):
+        TestAIOpenScaleClient.ai_client.data_mart.bindings.delete(TestAIOpenScaleClient.binding_uid)
+
+    @classmethod
+    def tearDownClass(cls):
+        print("Deleting DataMart.")
+        cls.ai_client.data_mart.delete()
+
+
+if __name__ == '__main__':
+    unittest.main()
