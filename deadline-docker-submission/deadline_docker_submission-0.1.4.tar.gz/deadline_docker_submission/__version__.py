@@ -1,0 +1,7 @@
+__title__ = 'deadline_docker_submission'
+__description__ = 'Deadline Docker submission.'
+__url__ = 'https://gitlab.com/mgcollie/deadline_docker_submission'
+__version__ = '0.1.4'
+__author__ = 'Matt Collie'
+__author_email__ = 'mattc@snowballstudios.ca'
+__license__ = 'Apache 2.0'
