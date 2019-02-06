@@ -1,0 +1,25 @@
+from distutils.core import setup
+setup(
+  name = 'school_1411',
+  packages = ['school_1411'],   
+  version = '0.0.5',
+  license = 'MIT',
+  description = 'Really easy and experemental package',   
+  author = 'Ilya Tolstobrov',                   
+  author_email = 'tol063115@mail.ru',
+  url = 'https://github.com/tol063115/school_1411',  
+  download_url = 'https://github.com/tol063115/school_1411/archive/0.0.5.tar.gz',
+  keywords = ['School 1411', 'IT', 'FIBONACCI'],   
+  install_requires=['math'],
+  classifiers=[
+    'Development Status :: 3 - Alpha',      
+    'Intended Audience :: Developers',      
+    'Topic :: Software Development :: Build Tools',
+    'License :: OSI Approved :: MIT License',   
+    'Programming Language :: Python :: 3',      
+    'Programming Language :: Python :: 3.4',
+    'Programming Language :: Python :: 3.5',
+    'Programming Language :: Python :: 3.6',
+    'Programming Language :: Python :: 3.7',
+  ],
+)
