@@ -1,0 +1,1519 @@
+from ast import literal_eval
+
+import functools
+from datetime import timedelta
+from pathlib import Path
+
+import f90nml
+import numpy as np
+import pandas as pd
+from supy_driver import suews_driver as sd
+
+from .supy_env import path_supy_module
+from .supy_misc import path_insensitive
+
+
+########################################################################
+# get_args_suews can get the interface informaiton
+# of the f2py-converted Fortran interface
+def get_args_suews(docstring=sd.suews_cal_main.__doc__):
+    # split doc lines for processing
+    docLines = np.array(
+        docstring.splitlines(),
+        dtype=str)
+
+    # get the information of input variables for SUEWS_driver
+    # posInput = np.where(
+    #     np.logical_or(
+    #         docLines == 'Parameters', docLines == 'Returns'))
+    # varInputLines = docLines[posInput[0][0] + 2:posInput[0][1] - 1]
+    ser_docs = pd.Series(docLines)
+    varInputLines = ser_docs[ser_docs.str.contains('input|in/output')].values
+    varInputInfo = np.array([[xx.rstrip() for xx in x.split(':')]
+                             for x in varInputLines])
+    dict_InputInfo = {xx[0]: xx[1] for xx in varInputInfo}
+    dict_InOutInfo = {xx[0]: xx[1] for xx in varInputInfo if 'in/out' in xx[1]}
+
+    # get the information of output variables for SUEWS_driver
+    posOutput = np.where(docLines == 'Returns')
+    varOutputLines = docLines[posOutput[0][0] + 2:]
+    varOutputInfo = np.array([[xx.rstrip() for xx in x.split(':')]
+                              for x in varOutputLines])
+    dict_OutputInfo = {xx[0]: xx[1] for xx in varOutputInfo}
+
+    # pack in/out results:
+    dict_inout_sd = {
+        # 'input' and 'output' are dict's that store variable information:
+        # 1. intent: e.g., input, in/output
+        # 2. dimension: e.g., (366,7)
+        'input': dict_InputInfo,
+        'output': dict_OutputInfo,
+        # 'var_input' and 'var_output' are tuples,
+        # that keep the order of arguments as in the Fortran subroutine
+        'var_input': tuple(varInputInfo[:, 0]),
+        'var_inout': tuple(dict_InOutInfo.keys()),
+        'var_output': tuple(varOutputInfo[:, 0])}
+
+    return dict_inout_sd
+
+
+# for `suews_cal_multitsteps`
+def get_args_suews_multitsteps():
+    # split doc lines for processing
+    docLines = np.array(
+        sd.suews_cal_multitsteps.__doc__.splitlines(),
+        dtype=str)
+
+    # get the information of input variables for SUEWS_driver
+    # posInput = np.where(
+    #     np.logical_or(
+    #         docLines == 'Parameters', docLines == 'Returns'))
+    ser_docs = pd.Series(docLines)
+    varInputLines = ser_docs[ser_docs.str.contains('input|in/output')].values
+    varInputInfo = np.array([[xx.rstrip() for xx in x.split(':')]
+                             for x in varInputLines])
+    dict_InputInfo = {xx[0]: xx[1] for xx in varInputInfo}
+    dict_InOutInfo = {xx[0]: xx[1] for xx in varInputInfo if 'in/out' in xx[1]}
+
+    # get the information of output variables for SUEWS_driver
+    posOutput = np.where(docLines == 'Returns')
+    varOutputLines = docLines[posOutput[0][0] + 2:]
+    varOutputInfo = np.array([[xx.rstrip() for xx in x.split(':')]
+                              for x in varOutputLines])
+    dict_OutputInfo = {xx[0]: xx[1] for xx in varOutputInfo}
+
+    # pack in/out results:
+    dict_inout_sd = {
+        # 'input' and 'output' are dict's that store variable information:
+        # 1. intent: e.g., input, in/output
+        # 2. dimension: e.g., (366,7)
+        'input': dict_InputInfo,
+        'output': dict_OutputInfo,
+        # 'var_input' and 'var_output' are tuples,
+        # that keep the order of arguments as in the Fortran subroutine
+        'var_input': tuple(varInputInfo[:, 0]),
+        'var_inout': tuple(dict_InOutInfo.keys()),
+        'var_output': tuple(varOutputInfo[:, 0])}
+
+    return dict_inout_sd
+
+
+# store these lists for later use
+list_var_input = list(get_args_suews()['var_input'])
+list_var_inout = list(get_args_suews()['var_inout'])
+list_var_output = list(get_args_suews()['var_output'])
+set_var_input = set(list_var_input)
+set_var_inout = set(list_var_inout)
+set_var_ouput = set(list_var_output)
+
+list_var_input_multitsteps = list(get_args_suews_multitsteps()['var_input'])
+list_var_inout_multitsteps = list(get_args_suews_multitsteps()['var_inout'])
+list_var_output_multitsteps = list(get_args_suews_multitsteps()['var_output'])
+set_var_input_multitsteps = set(list_var_input_multitsteps)
+set_var_inout_multitsteps = set(list_var_inout_multitsteps)
+set_var_ouput_multitsteps = set(list_var_output_multitsteps)
+
+# variables used in df_state
+set_var_use = set_var_input.intersection(set_var_input_multitsteps)
+
+##############################################################################
+# input processor
+# 1. surface properties will be retrieved and packed together for later use
+# 2. met forcing conditions will splitted into time steps and used to derive
+# other information
+
+
+# descriptive list/dicts for variables
+# minimal required input files for configuration:
+list_file_input = [
+    'SUEWS_AnthropogenicHeat.txt',
+    'SUEWS_BiogenCO2.txt',
+    'SUEWS_Conductance.txt',
+    'SUEWS_ESTMCoefficients.txt',
+    'SUEWS_Irrigation.txt',
+    'SUEWS_NonVeg.txt',
+    'SUEWS_OHMCoefficients.txt',
+    'SUEWS_Profiles.txt',
+    'SUEWS_SiteSelect.txt',
+    'SUEWS_Snow.txt',
+    'SUEWS_Soil.txt',
+    'SUEWS_Veg.txt',
+    'SUEWS_Water.txt',
+    'SUEWS_WithinGridWaterDist.txt'
+]
+
+# library of all properties
+dict_libVar2File = {fileX.replace('.txt', '').replace(
+    'SUEWS', 'lib'): fileX for fileX in list_file_input
+    if fileX.endswith('.txt')}
+
+# dictionaries:
+# links between code in SiteSelect to properties in according tables
+# this is described in SUEWS online manual:
+# https://suews-docs.readthedocs.io/en/latest/input_files/SUEWS_SiteInfo/SUEWS_SiteInfo.html
+path_code2file = path_supy_module / 'code2file.json'
+dict_Code2File = pd.read_json(path_code2file, typ='series').to_dict()
+# variable translation as done in Fortran-SUEWS
+# path_var2siteselect = os.path.join(path_supy_module, 'var2siteselect.json')
+path_var2siteselect = path_supy_module / 'var2siteselect.json'
+dict_var2SiteSelect = pd.read_json(path_var2siteselect, typ='series').to_dict()
+
+# expand dict_Code2File for retrieving surface characteristics
+dict_varSiteSelect2File = {
+    x: 'SUEWS_SiteSelect.txt' for x in dict_var2SiteSelect.keys()}
+dict_Code2File.update(dict_varSiteSelect2File)
+
+
+# extract metainfo of var from dict_info
+def extract_var_info(var_name, dict_info):
+    dict_var_info = {'name': var_name}
+    var_line = dict_info[var_name]
+    list_var_line = var_line.split()
+    if 'array' in var_line:
+        dict_var_info.update({'intent': list_var_line[0]})
+        # print(list_var_line)
+        rank = int(list_var_line[1].split('-')[-1])
+        dict_var_info.update({'rank': rank})
+        dtype = list_var_line[2]
+        dict_var_info.update({'dtype': dtype})
+        if rank > 0:
+            bounds = list_var_line[-1]
+            dict_var_info.update({'bounds': bounds})
+        else:
+            dict_var_info.update({'bounds': 0})
+    else:
+        dict_var_info.update({'intent': list_var_line[0]})
+        rank = 0
+        dict_var_info.update({'rank': rank})
+        dtype = list_var_line[1]
+        dict_var_info.update({'dtype': dtype})
+        dict_var_info.update({'bounds': 0})
+    return dict_var_info
+
+
+# generate DataFrame of docstring for suews_wrappers generated by f2py
+def gen_suews_arg_info_df(docstring):
+    dict_info = get_args_suews(docstring)['input']
+    # dict_info.update(get_args_suews(docstring)['output'])
+    dict_info = {var: extract_var_info(var, dict_info) for var in dict_info}
+    df_info = pd.DataFrame(dict_info).T
+    return df_info
+
+
+df_info_suews_cal_main = gen_suews_arg_info_df(sd.suews_cal_main.__doc__)
+df_info_suews_cal_multitsteps = gen_suews_arg_info_df(
+    sd.suews_cal_multitsteps.__doc__)
+
+df_var_info = df_info_suews_cal_multitsteps.merge(
+    df_info_suews_cal_main, how='outer').set_index('name')
+
+# load model settings
+# load configurations: mod_config
+# process RunControl.nml
+# this function can handle all SUEWS nml files
+
+
+@functools.lru_cache(maxsize=128)
+def load_SUEWS_nml(path_file):
+    # remove case issues
+    # xfile = path_insensitive(xfile)
+    try:
+        path_file_x = Path(path_insensitive(str(path_file)))
+        path_file = path_file_x.resolve()
+        str_file = path_insensitive(str(path_file))
+        df_res = pd.DataFrame(f90nml.read(str_file))
+        return df_res
+    except FileNotFoundError:
+        print('{path} does not exists!'.format(path=path_file))
+
+
+# def load_SUEWS_RunControl(path_file):
+#     lib_RunControl = load_SUEWS_nml(path_file)
+#     # return DataFrame containing settings
+#     return lib_RunControl
+
+
+# load all tables (xgrid.e., txt files)
+@functools.lru_cache(maxsize=128)
+def load_SUEWS_table(path_file):
+    # remove case issues
+    try:
+        path_file = path_file.resolve()
+    except FileNotFoundError:
+        print('{path} does not exists!'.format(path=path_file))
+    else:
+        # fileX = path_insensitive(fileX)
+        str_file = str(path_file)
+        rawdata = pd.read_table(
+            str_file,
+            delim_whitespace=True,
+            comment='!',
+            error_bad_lines=False,
+            skiprows=1,
+            index_col=0
+        )
+        rawdata = rawdata.dropna()
+        # rawdata = rawdata.apply(pd.to_numeric)
+        rawdata.index = rawdata.index.astype(int)
+    return rawdata
+
+
+# load all tables into variables staring with 'lib_' and filename
+# @functools.lru_cache(maxsize=16)
+def load_SUEWS_Libs(path_input):
+    dict_libs = {}
+    for lib, lib_file in dict_libVar2File.items():
+        # print(lib_file)
+        # lib_path = os.path.join(path_input, lib_file)
+        lib_path = path_input / lib_file
+        dict_libs.update({lib: load_SUEWS_table(lib_path)})
+    # return DataFrame containing settings
+    return dict_libs
+
+
+# look up properties according to code
+@functools.lru_cache(maxsize=None)
+def lookup_code_lib(libCode, codeKey, codeValue, path_input):
+    str_lib = dict_Code2File[libCode].replace(
+        '.txt', '').replace('SUEWS', 'lib')
+    dict_libs = load_SUEWS_Libs(path_input)
+    lib = dict_libs[str_lib]
+    # print(str_lib,codeKey,codeValue)
+    if codeKey == ':':
+        res = lib.loc[int(np.unique(codeValue)), :].tolist()
+    else:
+        res = lib.loc[int(np.unique(codeValue)), codeKey]
+        if isinstance(res, pd.Series):
+            # drop duolicates, otherwise duplicate values
+            # will be introduced with more complexity
+            res = res.drop_duplicates()
+            res = res.values[0] if res.size == 1 else res.tolist()
+    return res
+
+
+# a recursive function to retrieve value based on key sequences
+# @hash_dict
+@functools.lru_cache(maxsize=None)
+def lookup_KeySeq_lib(indexKey, subKey, indexCode, path_input):
+    # print('\ntest lookup_KeySeq_lib')
+    # print(indexKey, subKey, indexCode, type(subKey))
+    # print('test end\n')
+    if isinstance(subKey, float):
+        res = subKey
+    # elif indexKey == 'const':
+    #     res = subKey
+    elif type(subKey) is str:
+        res = lookup_code_lib(indexKey, subKey, indexCode, path_input)
+    elif isinstance(subKey, dict):
+        # elif isinstance(subKey, HDict):
+        res = []
+        for indexKeyX, subKeyX in subKey.items():
+            # print(indexKeyX, subKeyX)
+            if indexKeyX == 'const':
+                resX = subKeyX
+            else:
+                # indexKeyX, subKeyX = list(subKey.items())[0]
+                indexCodeX = lookup_code_lib(
+                    indexKey, indexKeyX, indexCode, path_input)
+                if isinstance(subKeyX, list):
+                    resX = [
+                        lookup_KeySeq_lib(
+                            indexKeyX, x_subKeyX, indexCodeX, path_input)
+                        for x_subKeyX in subKeyX]
+                else:
+                    resX = lookup_KeySeq_lib(
+                        indexKeyX, subKeyX, indexCodeX, path_input)
+            res.append(resX)
+        res = res[0] if len(res) == 1 else res
+    elif isinstance(subKey, list):
+        # elif isinstance(subKey, HList):
+        res = []
+        for subKeyX in subKey:
+            indexCodeX = indexCode
+            resX = lookup_KeySeq_lib(indexKey, subKeyX, indexCodeX, path_input)
+            res.append(resX)
+        res = res[0] if len(res) == 1 else res
+    # final result
+    return res
+
+
+# load surface characteristics
+def load_SUEWS_SurfaceChar(path_input):
+    # load all libraries
+    dict_libs = load_SUEWS_Libs(path_input)
+    list_grid = dict_libs['lib_SiteSelect'].index
+    # construct a dictionary in the form: {grid:{var:value,...}}
+    dict_gridSurfaceChar = {
+        grid: {
+            k: lookup_KeySeq_lib(k, v, grid, path_input)
+            for k, v in dict_var2SiteSelect.items()
+        }
+        for grid in list_grid}
+    # convert the above dict to DataFrame
+    df_gridSurfaceChar = pd.DataFrame.from_dict(dict_gridSurfaceChar).T
+    # empty dict to hold updated values
+    # dict_x_grid = {}
+    # modify some variables to be compliant with SUEWS requirement
+    for xgrid in df_gridSurfaceChar.index:
+        # transpoe snowprof:
+        df_gridSurfaceChar.at[xgrid, 'snowprof_24hr'] = np.array(
+            df_gridSurfaceChar.at[xgrid, 'snowprof_24hr'], order='F').T
+
+        # transpoe laipower:
+        df_gridSurfaceChar.at[xgrid, 'laipower'] = np.array(
+            df_gridSurfaceChar.at[xgrid, 'laipower'], order='F').T
+
+        # select non-zero values for waterdist of water surface:
+        x = np.array(df_gridSurfaceChar.at[xgrid, 'waterdist'][-1])
+        df_gridSurfaceChar.at[xgrid, 'waterdist'][-1] = (
+            x[np.nonzero(x)])
+
+        # surf order as F:
+        df_gridSurfaceChar.at[xgrid, 'storedrainprm'] = np.array(
+            df_gridSurfaceChar.at[xgrid, 'storedrainprm'], order='F')
+
+        # convert to np.array
+        df_gridSurfaceChar.at[xgrid, 'alb'] = np.array(
+            df_gridSurfaceChar.at[xgrid, 'alb'])
+
+        # convert unit of `surfacearea` from ha to m^2
+        df_gridSurfaceChar.at[xgrid, 'surfacearea'] = np.array(
+            df_gridSurfaceChar.at[xgrid, 'surfacearea'] * 10000.)
+
+        # print type(df_gridSurfaceChar.loc[xgrid, 'alb'])
+
+        # dict holding updated values that can be converted to DataFrame later
+        # dict_x = df_gridSurfaceChar.loc[xgrid, :].to_dict()
+        # print 'len(dict_x)',len(dict_x['laipower'])
+
+        # profiles:
+        list_varTstep = [
+            'ahprof_24hr',
+            'popprof_24hr',
+            'traffprof_24hr',
+            'humactivity_24hr',
+            'wuprofm_24hr',
+            'wuprofa_24hr',
+        ]
+        df_gridSurfaceChar.loc[xgrid, list_varTstep] = \
+            df_gridSurfaceChar.loc[xgrid, list_varTstep].map(np.transpose)
+
+    # convert to DataFrame
+    # df_x_grid = pd.DataFrame.from_dict(dict_x_grid).T
+    df_x_grid = df_gridSurfaceChar
+    return df_x_grid
+
+
+def func_parse_date(year, doy, hour, min):
+    # dt = datetime.datetime.strptime(
+    #     ' '.join([year, doy, hour, min]), '%Y %j %H %M')
+    dt = pd.to_datetime(' '.join(
+        [str(k) for k in [year, doy, hour, min]]),
+        format='%Y %j %H %M')
+    return dt
+
+
+def func_parse_date_row(row):
+    [year, doy, hour, tmin] = row.loc[['iy', 'id', 'it', 'imin']]
+    # dt = datetime.datetime.strptime(
+    #     ' '.join([year, doy, hour, min]), '%Y %j %H %M')
+    dt = pd.to_datetime(' '.join(
+        [str(k) for k in [year, doy, hour, tmin]]),
+        format='%Y %j %H %M')
+    return dt
+
+
+# calculate decimal time
+def dectime(timestamp):
+    t = timestamp
+    dectime = (t.dayofyear - 1) + (
+        t.hour + (t.minute + t.second / 60.) / 60.
+    ) / 24
+    return dectime
+
+# resample solar radiation by zenith correction and total amount distribution
+
+
+def resample_kdn(data_raw_kdn, tstep_mod, timezone, lat, lon, alt):
+    # adjust solar radiation
+    datetime_mid_local = data_raw_kdn.index - timedelta(
+        seconds=tstep_mod / 2)
+    sol_elev = np.array([sd.suews_cal_sunposition(
+        t.year, dectime(t), timezone, lat, lon, alt)[-1]
+        for t in datetime_mid_local])
+    sol_elev_reset = np.zeros_like(sol_elev)
+    sol_elev_reset[sol_elev <= 90] = 1.
+    data_tstep_kdn_adj = sol_elev_reset * data_raw_kdn.copy()
+
+    # rescale daily amounts
+    avg_raw = data_raw_kdn.resample('D').mean()
+    avg_tstep = data_tstep_kdn_adj.resample('D').mean()
+    ratio_SWdown = (avg_raw / avg_tstep).reindex(
+        index=avg_tstep.index).resample(
+        '{tstep}S'.format(tstep=tstep_mod)).mean().fillna(method='pad')
+    data_tstep_kdn_adj = ratio_SWdown * \
+        data_tstep_kdn_adj.fillna(method='pad')
+
+    return data_tstep_kdn_adj
+
+
+# correct precipitation by even redistribution over resampled periods
+def resample_precip(data_raw_precip, tstep_mod, tstep_in):
+    ratio_precip = 1. * tstep_mod / tstep_in
+    data_tstep_precip_adj = ratio_precip * data_raw_precip.copy().shift(
+        -tstep_in + tstep_mod, freq='S').resample(
+        '{tstep}S'.format(tstep=tstep_mod)).mean().interpolate(
+        method='polynomial', order=0)
+    # assign a new start with nan
+    # t_start = data_raw_precip.index.shift(-tstep_in + tstep_mod, freq='S')[0]
+    t_end = data_raw_precip.index[-1]
+    # data_tstep_precip_adj.loc[t_start, :] = np.nan
+    data_tstep_precip_adj.loc[t_end] = np.nan
+    data_tstep_precip_adj = data_tstep_precip_adj.sort_index()
+    data_tstep_precip_adj = data_tstep_precip_adj.asfreq(
+        '{tstep}S'.format(tstep=tstep_mod))
+    data_tstep_precip_adj = data_tstep_precip_adj.fillna(value=0.)
+    return data_tstep_precip_adj
+
+
+# resample input forcing by linear interpolation
+def resample_linear(data_raw, tstep_in, tstep_mod):
+    # reset index as timestamps
+    # shift by half-tstep_in to generate a time series with instantaneous
+    # values
+    data_raw_shift = data_raw.copy().shift(-tstep_in / 2, freq='S')
+
+    # downscale input data to desired time step
+    data_raw_tstep = data_raw_shift.resample(
+        '{tstep}S'.format(tstep=tstep_mod)).interpolate(
+        method='polynomial', order=1).rolling(
+        window=2, center=False).mean()
+
+    # assign a new start with nan
+    t_start = data_raw.index.shift(-tstep_in + tstep_mod, freq='S')[0]
+    t_end = data_raw.index[-1]
+    data_raw_tstep.loc[t_start, :] = np.nan
+    data_raw_tstep.loc[t_end, :] = np.nan
+
+    # re-align the index so after resampling we can have filled heading part
+    data_raw_tstep = data_raw_tstep.sort_index()
+    data_raw_tstep = data_raw_tstep.asfreq('{tstep}S'.format(tstep=tstep_mod))
+    # fill gaps with valid values
+    data_tstep = data_raw_tstep.copy().bfill().ffill().dropna()
+
+    # correct temporal information
+    data_tstep['iy'] = data_tstep.index.year
+    data_tstep['id'] = data_tstep.index.dayofyear
+    data_tstep['it'] = data_tstep.index.hour
+    data_tstep['imin'] = data_tstep.index.minute
+
+    return data_tstep
+
+
+# resample input met foring to tstep required by model
+def resample_forcing_met(
+        data_met_raw, tstep_in, tstep_mod, lat, lon, alt, timezone, kdownzen):
+    # overall resample by linear interpolation
+    data_met_tstep = resample_linear(data_met_raw, tstep_in, tstep_mod)
+
+    # adjust solar radiation by zenith correction and total amount distribution
+    if kdownzen == 1:
+        data_met_tstep["kdown"] = resample_kdn(
+            data_met_tstep["kdown"], tstep_mod, timezone, lat, lon, alt)
+
+    # correct rainfall
+    data_met_tstep['rain'] = resample_precip(
+        data_met_raw['rain'], tstep_mod, tstep_in)
+
+    # # reset index with numbers
+    # data_met_tstep_out = data_met_tstep.copy().reset_index(drop=True)
+
+    return data_met_tstep
+
+
+# load raw data: met forcing
+def load_SUEWS_Forcing_met_df_raw(
+        path_input, filecode, grid, tstep_met_in, multiplemetfiles):
+    # file name pattern for met files
+    forcingfile_met_pattern = '{site}{grid}_*_{tstep}.txt'.format(
+        site=filecode,
+        grid=(grid if multiplemetfiles == 1 else ''),
+        tstep=int(tstep_met_in / 60))
+    # path_forcing_pattern = path_input / forcingfile_met_pattern
+    df_forcing_met = load_SUEWS_Forcing_met_df_pattern(
+        path_input, forcingfile_met_pattern)
+    return df_forcing_met
+
+
+# caching loaded met df for better performance in initialisation
+@functools.lru_cache(maxsize=None)
+def load_SUEWS_Forcing_met_df_pattern(path_input, forcingfile_met_pattern):
+    """Short summary.
+
+    Parameters
+    ----------
+    forcingfile_met_pattern : type
+        Description of parameter `forcingfile_met_pattern`.
+
+    Returns
+    -------
+    type
+        Description of returned object.
+
+    """
+    # list of met forcing files
+    path_input = path_input.resolve()
+    # forcingfile_met_pattern = os.path.abspath(forcingfile_met_pattern)
+    list_file_MetForcing = sorted([
+        f for f in path_input.glob(forcingfile_met_pattern)
+        if 'ESTM' not in f.name])
+
+    # print(forcingfile_met_pattern)
+    # print(list_file_MetForcing)
+    # load raw data
+    df_forcing_met = pd.concat(
+        [pd.read_table(
+            fileX,
+            delim_whitespace=True,
+            comment='!',
+            error_bad_lines=True
+        ).dropna() for fileX in list_file_MetForcing],
+        ignore_index=True)
+    # `drop_duplicates` in case some duplicates mixed
+    df_forcing_met = df_forcing_met.drop_duplicates()
+    col_suews_met_forcing = [
+        'iy', 'id', 'it', 'imin',
+        'qn', 'qh', 'qe', 'qs', 'qf',
+        'U', 'RH', 'Tair', 'pres', 'rain', 'kdown',
+        'snow', 'ldown', 'fcld',
+        'Wuh', 'xsmd', 'lai', 'kdiff', 'kdir', 'wdir'
+    ]
+    # rename these columns to match variables via the driver interface
+    df_forcing_met.columns = col_suews_met_forcing
+
+    # convert unit from kPa to hPa
+    df_forcing_met['pres'] *= 10
+
+    # add `isec` for WRF-SUEWS interface
+    df_forcing_met['isec'] = 0
+
+    # set correct data types
+    df_forcing_met[['iy', 'id', 'it', 'imin', 'isec']] = df_forcing_met[[
+        'iy', 'id', 'it', 'imin', 'isec']].astype(np.int64)
+
+    # set timestamp as index
+    idx_dt = pd.date_range(
+        *df_forcing_met.iloc[[0, -1], :4].astype(int).astype(str).apply(
+            lambda ser: ser.str.cat(sep=' '), axis=1).map(
+            lambda dt: pd.Timestamp.strptime(dt, '%Y %j %H %M')),
+        periods=df_forcing_met.shape[0])
+
+    df_forcing_met = df_forcing_met.set_index(idx_dt)
+
+    return df_forcing_met
+
+
+# load raw data: met forcing
+def load_SUEWS_Forcing_ESTM_df_raw(
+        path_input, filecode, grid, tstep_ESTM_in, multipleestmfiles):
+    # file name pattern for met files
+    forcingfile_ESTM_pattern = '{site}{grid}*{tstep}*txt'.format(
+        site=filecode,
+        grid=(grid if multipleestmfiles == 1 else ''),
+        tstep=tstep_ESTM_in / 60)
+
+    # list of met forcing files
+    list_file_MetForcing = [
+        f for f in path_input.glob(forcingfile_ESTM_pattern)
+        if 'ESTM' in f]
+
+    # load raw data
+    df_forcing_estm = pd.concat(
+        [pd.read_table(
+            fileX,
+            delim_whitespace=True,
+            comment='!',
+            error_bad_lines=True
+            # parse_dates={'datetime': [0, 1, 2, 3]},
+            # keep_date_col=True,
+            # date_parser=func_parse_date
+        ).dropna() for fileX in list_file_MetForcing],
+        ignore_index=True).rename(
+        columns={
+            '%' + 'iy': 'iy',
+            'id': 'id',
+            'it': 'it',
+            'imin': 'imin',
+            'kdown': 'avkdn',
+            'RH': 'avrh',
+            'U': 'avu1',
+            'fcld': 'fcld_obs',
+            'lai': 'lai_obs',
+            'ldown': 'ldown_obs',
+            'rain': 'precip',
+            'pres': 'press_hpa',
+            'qh': 'qh_obs',
+            'qn': 'qn1_obs',
+            'snow': 'snow_obs',
+            'Tair': 'temp_c',
+            # 'all': 'metforcingdata_grid',
+            'xsmd': 'xsmd'})
+
+    # set correct data types
+    df_forcing_estm[['iy', 'id', 'it', 'imin']] = df_forcing_estm[[
+        'iy', 'id', 'it', 'imin']].astype(np.int64)
+
+    return df_forcing_estm
+
+
+# TODO: add support for loading multi-grid forcing datasets
+# def load_SUEWS_Forcing_df(dir_site, ser_mod_cfg, df_state_init):
+#     pass
+
+
+###############################################################################
+# new initialisation functions below
+# for better performance
+
+
+# expand dict into paired tuples
+def exp_dict2tuple(rec):
+    if isinstance(rec, str):
+        return rec
+    elif isinstance(rec, float):
+        # expand this for consistency in value indexing
+        return [(rec, 'base')]
+    elif isinstance(rec, dict):
+        res = [
+            # expand profile values to all hour indices
+            (k, [str(i) for i in range(24)])
+            if v == ':' else (k, exp_dict2tuple(v)) for k, v in rec.items()]
+        # print(res)
+        return res
+    elif isinstance(rec, list):
+        return [exp_dict2tuple(v) for v in rec]
+
+
+# test if a list exists in a tuple
+def list_in_tuple_Q(rec):
+    if isinstance(rec, tuple):
+        return any(isinstance(x, list) for x in rec)
+    else:
+        return False
+
+
+# expand list of nested tuples to simple chained tuples
+# (a,[b1,b2])->[(a,b1),(a,b2)]
+def exp_list2tuple(rec):
+    if isinstance(rec, list):
+        if len(rec) == 1:
+            return exp_list2tuple(rec[0])
+        else:
+            return [exp_list2tuple(x) for x in rec]
+    elif list_in_tuple_Q(rec):
+        for i, v in enumerate(rec):
+            if isinstance(v, list):
+                res = [(*rec[:i], x) if isinstance(x, (str, int))
+                       else (*rec[:i], *x)
+                       for x in v]
+                res = [exp_list2tuple(x) for x in res]
+                return exp_list2tuple(res)
+    else:
+        return rec
+
+
+# collect tracing entries under a reference `code`
+def gather_code_set(code, dict_var2SiteSelect):
+    set_res = set()
+    # print('\n code', code)
+    for k, v in dict_var2SiteSelect.items():
+        # print(set_res, type(set_res), k, v)
+        if k == code:
+            if isinstance(v, str):
+                set_res.update([v])
+            elif isinstance(v, list):
+                set_res.update(v)
+            elif isinstance(v, dict):
+                set_res.update(v.keys())
+            else:
+                print(k, v)
+        elif isinstance(v, dict):
+            # print(res,v)
+            set_res.update(list(gather_code_set(code, v)))
+        elif isinstance(v, list):
+            # print(set_res, v)
+            for v_x in v:
+                if isinstance(v_x, dict):
+                    set_res.update(list(gather_code_set(code, v_x)))
+    return set_res
+
+
+# generate DataFrame based on reference `code` with index from `df_base`
+def build_code_df(code, path_input, df_base):
+    # str_lib = dict_Code2File[libCode].replace(
+    #     '.txt', '').replace('SUEWS', 'lib')
+    dict_libs = load_SUEWS_Libs(path_input)
+
+    keys_code = gather_code_set(code, dict_var2SiteSelect)
+    if keys_code == {':'}:
+        # for profile values, extract all
+        list_keys = code
+    else:
+        list_keys = [(code, k) for k in list(keys_code)]
+    lib_code = dict_Code2File[code]
+    str_lib = lib_code.replace('.txt', '').replace('SUEWS', 'lib')
+    # lib = dict_libs[str_lib]
+
+    df_code0 = pd.concat([dict_libs[str_lib]], axis=1, keys=[code])
+    # df_siteselect = dict_libs['lib_SiteSelect']
+    if isinstance(df_base.columns, pd.core.index.MultiIndex):
+        code_base = df_base.columns.levels[0][0]
+        code_index = (code_base, code)
+    else:
+        code_index = code
+
+    list_code = df_base[code_index].astype(int).values
+
+    try:
+        df_code = df_code0.loc[list_code, list_keys]
+    except Exception as e:
+        print('Entries missing from {lib}'.format(lib=lib_code))
+        print('\nlist_code:\n', list_code, '\n', df_code0.index)
+        print('\nlist_keys\n', list_keys, '\n', df_code0.columns)
+
+        raise e
+
+    df_code.index = df_base.index
+    # recover outmost level code if profile values are extracted
+    if keys_code == {':'}:
+        df_code = pd.concat([df_code], axis=1, keys=[code])
+    return df_code
+
+
+# if to expand
+def to_exp_Q(code_str):
+    return ('Code' in code_str) or ('Prof' in code_str)
+
+
+# generate df with all code-references values
+@functools.lru_cache(maxsize=16)
+def gen_all_code_df(path_input):
+    dict_libs = load_SUEWS_Libs(path_input)
+    df_siteselect = dict_libs['lib_SiteSelect']
+    list_code = [
+        code for code in df_siteselect.columns
+        if to_exp_Q(code)
+    ]
+
+    # dict with code:{vars}
+    dict_code_var = {
+        code: gather_code_set(code, dict_var2SiteSelect)
+        for code in list_code
+        if len(gather_code_set(code, dict_var2SiteSelect)) > 0
+    }
+
+    # stage one expansion
+    df_all_code = pd.concat(
+        [build_code_df(code, path_input, df_siteselect)
+         for code in dict_code_var],
+        axis=1)
+
+    return df_all_code
+
+
+# generate df for all const based columns
+# @functools.lru_cache(maxsize=16)
+def gen_all_const_df(path_input):
+    dict_libs = load_SUEWS_Libs(path_input)
+    df_siteselect = dict_libs['lib_SiteSelect']
+
+    df_cst_all = df_siteselect.copy()
+    dict_var_tuple = exp_dict_full(dict_var2SiteSelect)
+
+    set_const_col = {
+        v
+        for x in dict_var_tuple.values() if isinstance(x, list)
+        for v in x if 'const' in v
+    }
+
+    list_const_col = [x[1] for x in set_const_col]
+    for cst in set_const_col:
+        df_cst_all[cst[1]] = cst[1]
+    df_cst_all = df_cst_all.loc[:, list_const_col]
+    df_cst_all = pd.concat([df_cst_all], axis=1, keys=['base'])
+    df_cst_all = pd.concat([df_cst_all], axis=1, keys=['const'])
+    df_cst_all = df_cst_all.swaplevel(i=1, j=-1, axis=1)
+
+    return df_cst_all
+
+
+# build code expanded ensemble libs
+@functools.lru_cache(maxsize=16)
+def build_code_exp_df(path_input, code_x):
+    # df with all code-references values
+    df_all_code = gen_all_code_df(path_input)
+
+    # df with code_x for further exapansion
+    df_base_x = df_all_code[code_x]
+
+    # columns in df_base_x for further expansion
+    list_code_x = [code for code in df_base_x.columns if to_exp_Q(code)]
+    # print(list_code_x)
+    df_all_code_x = pd.concat(
+        [build_code_df(code, path_input, df_base_x)
+         for code in list_code_x],
+        axis=1)
+    df_all_code_x = pd.concat([df_all_code_x], axis=1, keys=[code_x])
+
+    # add innermost lables to conform dimensionality
+    df_base_x_named = pd.concat([df_base_x], axis=1, keys=[code_x])
+    df_base_x_named = pd.concat([df_base_x_named], axis=1, keys=['base'])
+    df_base_x_named = df_base_x_named.swaplevel(
+        i=0, j=1, axis=1).swaplevel(i=1, j=-1, axis=1)
+
+    # print(df_base_x_named.columns)
+    # print(df_all_code_x.columns)
+    df_res_exp = pd.concat([df_base_x_named, df_all_code_x], axis=1)
+
+    return df_res_exp
+
+
+@functools.lru_cache(maxsize=16)
+def gen_df_siteselect_exp(path_input):
+    # df with all code-references values
+    df_all_code = gen_all_code_df(path_input)
+
+    # retrieve all `Code`-relaed names
+    dict_libs = load_SUEWS_Libs(path_input)
+    df_siteselect = dict_libs['lib_SiteSelect']
+    # list_code = [code for code in df_siteselect.columns if 'Code' in code]
+
+    # dict with code:{vars}
+    dict_code_var = {
+        code: gather_code_set(code, dict_var2SiteSelect)
+        for code in df_all_code.columns.levels[0]
+    }
+
+    # code with nested references
+    dict_code_var_nest = {
+        code: dict_code_var[code]
+        for code in dict_code_var.keys()
+        if any(('Code' in v) or ('Prof' in v) for v in dict_code_var[code])
+    }
+
+    # code with simple values
+    dict_code_var_simple = {
+        code: dict_code_var[code]
+        for code in dict_code_var.keys()
+        if code not in dict_code_var_nest
+    }
+
+    # stage 2: expand all code to actual values
+    # nested code: code -> code -> value
+    df_code_exp_nest = pd.concat(
+        [build_code_exp_df(path_input, code)
+         for code in list(dict_code_var_nest)],
+        axis=1
+    )
+    # simple code: code -> value
+    df_code_exp_simple = pd.concat(
+        [pd.concat(
+            [build_code_df(code, path_input, df_siteselect)
+             for code in list(dict_code_var_simple)],
+            axis=1
+        )], axis=1, keys=['base'])
+    df_code_exp_simple = df_code_exp_simple.swaplevel(
+        i=0, j=1, axis=1)
+    df_code_exp_simple = df_code_exp_simple.swaplevel(i=1, j=-1, axis=1)
+
+    # combine both nested and simple df's
+    df_code_exp = pd.concat([df_code_exp_simple, df_code_exp_nest], axis=1)
+
+    # generate const based columns
+    df_cst_all = gen_all_const_df(path_input)
+
+    # df_siteselect_pad: pad levels for pd.concat
+    df_siteselect_pad = pd.concat([df_siteselect], axis=1, keys=['base'])
+    df_siteselect_pad = df_siteselect_pad.swaplevel(i=0, j=1, axis=1)
+    df_siteselect_pad = pd.concat([df_siteselect_pad], axis=1, keys=['base'])
+    df_siteselect_pad = df_siteselect_pad.swaplevel(i=0, j=1, axis=1)
+
+    df_siteselect_exp = pd.concat(
+        [df_siteselect_pad, df_code_exp, df_cst_all],
+        axis=1)
+
+    return df_siteselect_exp
+
+
+# fully unravel nested lists into one flattened list
+def flatten_list(l):
+    res = []
+    if isinstance(l, list):
+        for x in l:
+            if isinstance(x, list):
+                res += flatten_list(x)
+            else:
+                res.append(x)
+    else:
+        res = l
+    return res
+
+
+# pad a single record to three-element tuple for easier indexing
+def pad_rec_single(rec):
+    base_pad = ['base' for i in range(3)]
+    if isinstance(rec, tuple) and len(rec) < 3:
+        # print(rec)
+        if all(isinstance(v, (str, float, int)) for v in rec):
+            v_pad = tuple(list(rec) + base_pad)[:3]
+        else:
+            v_pad = rec
+    elif isinstance(rec, str):
+        v_pad = tuple([rec] + base_pad)[:3]
+    else:
+        v_pad = rec
+    return v_pad
+
+
+# recursive version to generate three-element tuples
+def pad_rec(rec):
+    if isinstance(rec, list):
+        rec_pad = [pad_rec(v) for v in rec]
+    else:
+        rec_pad = pad_rec_single(rec)
+    return rec_pad
+
+
+# expand a dict to fully referenced tuples
+def exp_dict_full(dict_var2SiteSelect):
+    # expand dict to list of tuples
+    dict_list_tuple = {k: exp_dict2tuple(v)
+                       for k, v in dict_var2SiteSelect.items()}
+    # expand list of nested tuples to simple chained tuples
+    dict_var_tuple = {k: exp_list2tuple(v)
+                      for k, v in dict_list_tuple.items()}
+
+    # pad records to three-element tuples
+    dict_var_tuple = {k: pad_rec(v) for k, v in dict_var_tuple.items()}
+    return dict_var_tuple
+
+
+# save this as system variable
+# dict_var_tuple = exp_dict_full(dict_var2SiteSelect)
+
+
+# generate expanded surface characteristics df
+# this df contains all the actual values retrived from all tables
+@functools.lru_cache(maxsize=16)
+def gen_df_gridSurfaceChar_exp(path_input):
+    df_siteselect_exp = gen_df_siteselect_exp(path_input)
+    dict_var_tuple = exp_dict_full(dict_var2SiteSelect)
+    df_gridSurfaceChar_exp = pd.concat(
+        {
+            k: df_siteselect_exp.loc[:, flatten_list(dict_var_tuple[k])]
+            for k in dict_var_tuple
+        },
+        axis=1)
+    return df_gridSurfaceChar_exp
+
+
+# quickly load surface characteristics as DataFrame
+# the dimension info of each variable can be derived from level 1 in columns
+@functools.lru_cache(maxsize=16)
+def load_SUEWS_SurfaceChar_df(path_input):
+    df_gridSurfaceChar_exp = gen_df_gridSurfaceChar_exp(path_input)
+    dict_var_ndim = {
+        'ahprof_24hr': (24, 2),
+        'humactivity_24hr': (24, 2),
+        'laipower': (4, 3),
+        'ohm_coef': (8, 4, 3),
+        'popprof_24hr': (24, 2),
+        'snowprof_24hr': (24, 2),
+        'storedrainprm': (6, 7),
+        'traffprof_24hr': (24, 2),
+        'waterdist': (8, 6),
+        'wuprofa_24hr': (24, 2),
+        'wuprofm_24hr': (24, 2)
+    }
+    # df_gridSurfaceChar_x=df_gridSurfaceChar_exp.copy()
+
+    len_grid_orig = df_gridSurfaceChar_exp.shape[0]
+    df_x = df_gridSurfaceChar_exp
+    if len_grid_orig == 1:
+        df_gridSurfaceChar_exp = pd.concat([df_x, df_x])
+
+    # update len_grid for reshaping
+    list_var = df_gridSurfaceChar_exp.columns.levels[0]
+    len_grid = df_gridSurfaceChar_exp.shape[0]
+    list_grid = df_gridSurfaceChar_exp.index
+
+    # here we add append a dummy `pos` level to df_gridSurfaceChar_exp
+    # to avoid subset difficulty in subseting duplicate entries in multiindex
+    df_x = df_gridSurfaceChar_exp.T
+    # `pos` has unique values for each entry in columns
+    df_x['pos'] = np.arange(len(df_gridSurfaceChar_exp.columns))
+    # trasnpose back to have an extra column level `pos`
+    df_gridSurfaceChar_exp = df_x.set_index('pos', append=True).T
+
+    # extract column values and construct corresponding variables
+    dict_gridSurfaceChar = {
+        var: np.squeeze(df_gridSurfaceChar_exp[var].values)
+        for var in list_var
+    }
+
+    # correct the unit for 'surfacearea'
+    dict_gridSurfaceChar['surfacearea'] *= 1E4
+
+    for var, dim in dict_var_ndim.items():
+        # print(var)
+        val = df_gridSurfaceChar_exp.loc[:, var].values
+        if '_24hr' in var:
+            dim_x = dim[-1::-1]
+            # val = df_gridSurfaceChar_exp.loc[:, var].values
+            val_x = val.reshape((len_grid, *dim_x)).transpose((0, 2, 1))
+            dict_gridSurfaceChar.update({var: val_x})
+        elif var == 'laipower':
+            dim_x = dim[-1::-1]
+            # val = df_gridSurfaceChar_exp.loc[:, var].values
+            val_x = val.reshape((len_grid, *dim_x)).transpose((0, 2, 1))
+            dict_gridSurfaceChar.update({var: val_x})
+        elif var == 'storedrainprm':
+            dim_x = dim
+            # val = df_gridSurfaceChar_exp.loc[:, var].values
+            val_x = val.reshape((len_grid, *dim_x))
+            dict_gridSurfaceChar.update({var: val_x})
+        elif var == 'ohm_coef':
+            dim_x = dim
+            # val = df_gridSurfaceChar_exp.loc[:, var].values
+            val_x = val.reshape((len_grid, *dim_x))
+            dict_gridSurfaceChar.update({var: val_x})
+        elif var == 'waterdist':
+            dim_x = dict_var_ndim[var]  # [-1::-1]
+            # val = df_gridSurfaceChar_exp.loc[:, var].values
+            val_x0 = val.reshape((len_grid, 9, 6))
+            # directly load the values for commen land covers
+            val_x1 = val_x0[:, :7]
+            # process the ToSoilStore and ToRunoff entries
+            val_x2 = val_x0[:, 7:].reshape(
+                len_grid, 6, 2).sum(axis=2).reshape(-1, 1, 6)
+            # combine valuees of common land convers and special cases
+            val_x = np.hstack((val_x1, val_x2))
+            dict_gridSurfaceChar.update({var: val_x})
+
+    # convert to DataFrame
+    dict_var = {}
+    for var in list_var:
+        val = dict_gridSurfaceChar[var]
+        # ind_list = list(np.ndindex(val.shape[1:]))
+        ind_list = [str(x) for x in np.ndindex(val.shape[1:])]
+        df_var = pd.DataFrame(
+            val.reshape((val.shape[0], -1)),
+            index=list_grid,
+            columns=ind_list if len(ind_list) > 1 else ['0'])
+        dict_var.update({var: df_var})
+
+    df_sfc_char = pd.concat(dict_var, axis=1)
+    if len_grid_orig == 1:
+        df_sfc_char = df_sfc_char.drop_duplicates()
+
+    # add DataFrame for proper type detection
+    df_sfc_char = pd.DataFrame(df_sfc_char)
+
+    # set level names for columns
+    df_sfc_char.columns.set_names(['var', 'ind_dim'], inplace=True)
+
+    return df_sfc_char
+
+
+# filter out unnecessary entries by re-arranging the columns
+def trim_df_state(df_state: pd.DataFrame, set_var_use=set_var_use) -> pd.DataFrame:
+    # get indices of variables that are included in `set_var_use`: those used by SuPy simulation
+    ind_incl = df_state.columns.get_level_values('var').isin(set_var_use)
+    # retrieve only necessary columns
+    df_state_slim = df_state.loc[:, ind_incl]
+    # remove redundant `MultiIndex` levels
+    df_state_slim.columns = df_state_slim.columns.remove_unused_levels()
+
+    # df_state_slim = df_state.copy().stack().filter(items=set_var_use).unstack(0)
+
+    # # scalar variables
+    # df_state_slim_scalar = df_state_slim.loc[['0']].copy()
+    # # array variables, which need to be sorted to get layout correct
+    # df_state_slim_array = df_state_slim.filter(like='(', axis=0)
+    # # convert index to list for numerical sorting
+    # df_state_slim_array.index = df_state_slim_array.index.map(
+    #     lambda x: list(literal_eval(x)))
+    # df_state_slim_array = df_state_slim_array.sort_index()
+    # # after sorting, convert index back to str-tuple for hashing used in MultiIndex-ing
+    # df_state_slim_array.index = df_state_slim_array.index.map(
+    #     lambda x: str(tuple(x)))
+    # # concat scalar and array variables together
+    # # and sort columns by variable names
+    # df_state_slim = pd.concat(
+    #     [df_state_slim_scalar, df_state_slim_array],
+    #     axis=0).sort_index(axis=1)
+
+    # # rearrange layout back to the previous one
+    # df_state_slim = df_state_slim\
+    #     .stack('grid')\
+    #     .unstack('ind_dim')\
+    #     .dropna(axis=1)
+    return df_state_slim
+
+
+# mod_config: static properties
+dict_RunControl_default = {
+    'aerodynamicresistancemethod': 2,
+    'evapmethod': 2,
+    'laicalcyes': 1,
+    'veg_type': 1,
+    'diagnose': 0,
+    'diagnosedisagg': 0,
+    'diagnosedisaggestm': 0,
+    'diagqn': 0,
+    'diagqs': 0,
+    'keeptstepfilesin': 0,
+    'keeptstepfilesout': 0,
+    'writeoutoption': 0,
+    'disaggmethod': 1,
+    'disaggmethodestm': 1,
+    'raindisaggmethod': 100,
+    'rainamongn': -999,
+    'multrainamongn': -999,
+    'multrainamongnupperi': -999,
+    'kdownzen': 1,
+    'suppresswarnings': 0,
+    'resolutionfilesin': 0,
+}
+
+
+# load RunControl variables
+# @functools.lru_cache(maxsize=16)
+def load_SUEWS_dict_ModConfig(path_runcontrol, dict_default=dict_RunControl_default):
+    dict_RunControl = dict_default.copy()
+    dict_RunControl_x = load_SUEWS_nml(
+        path_runcontrol).loc[:, 'runcontrol'].to_dict()
+    dict_RunControl.update(dict_RunControl_x)
+    return dict_RunControl
+
+
+# initialise InitialCond_df with default values
+nan = -999.
+dict_InitCond_default = {
+    'dayssincerain':  0,
+    # `temp_c0` defaults to daily mean air temperature of the first day
+    # 'temp_c0':  df_forcing_met['temp_c'].iloc[:(24 * nsh) - 1].mean(),
+    'temp_c0':  10,
+    'leavesoutinitially':  int(nan),
+    'gdd_1_0':  nan,
+    'gdd_2_0':  nan,
+    'laiinitialevetr':  nan,
+    'laiinitialdectr':  nan,
+    'laiinitialgrass':  nan,
+    'albevetr0':  nan,
+    'albdectr0':  nan,
+    'albgrass0':  nan,
+    'decidcap0':  nan,
+    'porosity0':  nan,
+    'pavedstate':  0,
+    'bldgsstate':  0,
+    'evetrstate':  0,
+    'dectrstate':  0,
+    'grassstate':  0,
+    'bsoilstate':  0,
+    # 'waterstate':  df_gridSurfaceChar.at[grid, 'waterdepth'],
+    'waterstate':  10,
+    'soilstorepavedstate':  nan,
+    'soilstorebldgsstate':  nan,
+    'soilstoreevetrstate':  nan,
+    'soilstoredectrstate':  nan,
+    'soilstoregrassstate':  nan,
+    'soilstorebsoilstate':  nan,
+    'soilstorewaterstate': 0,
+    'snowinitially':  int(nan),
+    'snowwaterpavedstate':  nan,
+    'snowwaterbldgsstate':  nan,
+    'snowwaterevetrstate':  nan,
+    'snowwaterdectrstate':  nan,
+    'snowwatergrassstate':  nan,
+    'snowwaterbsoilstate':  nan,
+    'snowwaterwaterstate':  nan,
+    'snowpackpaved':  nan,
+    'snowpackbldgs':  nan,
+    'snowpackevetr':  nan,
+    'snowpackdectr':  nan,
+    'snowpackgrass':  nan,
+    'snowpackbsoil':  nan,
+    'snowpackwater':  nan,
+    'snowfracpaved':  nan,
+    'snowfracbldgs':  nan,
+    'snowfracevetr':  nan,
+    'snowfracdectr':  nan,
+    'snowfracgrass':  nan,
+    'snowfracbsoil':  nan,
+    'snowfracwater':  nan,
+    'snowdenspaved':  nan,
+    'snowdensbldgs':  nan,
+    'snowdensevetr':  nan,
+    'snowdensdectr':  nan,
+    'snowdensgrass':  nan,
+    'snowdensbsoil':  nan,
+    'snowdenswater':  nan,
+    'snowalb0':  nan,
+    'qn1_av': 0,
+    'qn1_s_av': 0,
+    'dqndt': 0,
+    'dqnsdt': 0,
+}
+
+# load initial conditions of all grids as a DataFrame
+
+
+@functools.lru_cache(maxsize=16)
+def load_SUEWS_InitialCond_df(path_runcontrol):
+    # load basic model settings
+    dict_ModConfig = load_SUEWS_dict_ModConfig(path_runcontrol)
+    # path for SUEWS input tables:
+    path_input = path_runcontrol.parent / dict_ModConfig['fileinputpath']
+    df_gridSurfaceChar = load_SUEWS_SurfaceChar_df(path_input)
+    # only use the first year of each grid as base for initial conditions
+    df_init = df_gridSurfaceChar.groupby('Grid').aggregate(np.min)
+    # rename 'Grid' to 'grid' for consistency
+    df_init.index.set_names('grid')
+
+    # incorporate numeric entries from dict_ModConfig
+    list_var_dim_from_dict_ModConfig = [
+        (var, 0, val) for var, val in dict_ModConfig.items()
+        if isinstance(val, (float, int))
+    ]
+    # set values according to `list_var_dim_from_dict_ModConfig`
+    # and generate the secondary dimensions
+    for var, dim, val in list_var_dim_from_dict_ModConfig:
+        ind_dim = [str(i) for i in np.ndindex(int(dim))] if dim > 0 else ['0']
+        val_x = df_init[val] if isinstance(val, str) else val
+        for ind in ind_dim:
+            df_init[(var, str(ind))] = val_x
+
+    # initialise df_InitialCond_grid with default values
+    for k in dict_InitCond_default:
+        # df_InitialCond_grid[k] = dict_InitCond_default[k]
+        df_init[(k, '0')] = dict_InitCond_default[k]
+
+    # update `temp_c0` with met_forcing
+    # # TODO: add temp_c0 from met_forcing
+
+    # update `waterstate` with df_gridSurfaceChar
+    # drop_duplicates in case multi-year run is set
+    # df_InitialCond_grid['waterstate'] = df_gridSurfaceChar_init['waterdepth']
+    df_init[('waterstate', '0')] = df_init['waterdepth']
+
+    # generate proper Initial Condition file names
+    base_str = 'initialconditions' + dict_ModConfig['filecode']
+    grid_str = (df_init.index.astype(str)
+                if dict_ModConfig['multipleinitfiles'] == 1
+                else '')
+    year_str = df_init[('year', '0')].astype(int).astype(str)
+    # ser_path_init =base_str + grid_str + '_' + year_str + '.nml'
+    df_init[('file_init', '0')] = base_str + grid_str + '_' + year_str + '.nml'
+    # ser_path_init = ser_path_init.map(lambda fn: path_input / fn)
+    df_init[('file_init', '0')] = df_init[('file_init', '0')]\
+        .map(lambda fn: path_input / fn)
+
+    return df_init
+
+
+# load Initial Condition variables from namelist file
+def add_file_init_df(df_init):
+    # load all nml info from file names:('file_init', '0')
+    df_init_file = pd.concat(
+        df_init[('file_init', '0')].map(
+            lambda fn: load_SUEWS_nml(fn))
+        .to_dict()).unstack()['initialconditions']
+    df_init_file = pd.concat([df_init_file], axis=1, keys=['0'])
+    df_init_file = df_init_file.swaplevel(0, 1, axis=1)
+    df_init_file.index.set_names(['Grid'], inplace=True)
+
+    # merge only those appeard in base df
+    df_init.update(df_init_file)
+
+    # drop ('file_init', '0') as this may cause non-numeic errors later on
+    df_init = df_init.drop(columns=[('file_init', '0')])
+    return df_init
+
+
+# add veg info into `df_init`
+def add_veg_init_df(df_init):
+    # get veg surface fractions
+    df_init[('fr_veg_sum', '0')] = df_init['sfr'].iloc[:, 2:5].sum(axis=1)
+
+    # get gdd_0
+    veg_sfr = df_init['sfr'].iloc[:, 2:5].T
+    veg_sfr = veg_sfr.reset_index(drop=True).T
+    x_gddfull = df_init['gddfull'].T.reset_index(drop=True).T
+    df_init[('gdd_0', '0')] = (veg_sfr * x_gddfull).sum(axis=1)
+    df_init[('gdd_0', '0')] /= veg_sfr.sum(axis=1)
+    df_init[('const', '0')] = 0
+
+    # list of tuples for assignment of leave on/off parameters
+    list_var_veg = [
+        # aligned for:
+        # (var, leavesout==1, leavesout==0)
+        (('gdd_1_0', '0'), ('gdd_0', '0'), ('const', '0')),
+        (('gdd_2_0', '0'), ('const', '0'), ('gdd_0', '0')),
+        (('laiinitialevetr', '0'), ('laimax', '(0,)'), ('laimin', '(0,)')),
+        (('laiinitialdectr', '0'), ('laimax', '(1,)'), ('laimin', '(1,)')),
+        (('laiinitialgrass', '0'), ('laimax', '(2,)'), ('laimin', '(2,)')),
+        (('albevetr0', '0'), ('albmax_evetr', '0'), ('albmin_evetr', '0')),
+        (('albdectr0', '0'), ('albmax_dectr', '0'), ('albmin_dectr', '0')),
+        (('albgrass0', '0'), ('albmax_grass', '0'), ('albmin_grass', '0')),
+        (('decidcap0', '0'), ('capmax_dec', '0'), ('capmin_dec', '0')),
+        (('porosity0', '0'), ('pormin_dec', '0'), ('pormax_dec', '0')),
+    ]
+
+    # determine veg related parameters based on `leavesoutinitially`
+    ser_leaves_on_flag = pd.Series(
+        (df_init['leavesoutinitially'] == 1).values.flatten())
+
+    # set veg related parameters
+    for var_veg, var_leaves_on, var_leaves_off in list_var_veg:
+        # print(var_veg, var_leaves_on, var_leaves_off)
+        # get default values based on ser_leaves_on_flag
+        val_dft = df_init[var_leaves_on]\
+            .where(ser_leaves_on_flag, df_init[var_leaves_off])
+        # if 'lai' in var_veg[0]:
+        #     print('ser_leaves_on_flag', ser_leaves_on_flag)
+        #     print('var_leaves_on', df_init[var_leaves_on].values)
+        #     print('var_leaves_off', df_init[var_leaves_off].values)
+        #     print('val_dft', val_dft.values)
+        #     print('')
+        # replace with val_dft if set as -999 (i.e., nan)
+        ser_valid_flag = ~(df_init[var_veg] == -999)
+        # ser_nan_flag = (df_init[var_veg] == -999)
+
+        df_init[var_veg] = df_init[var_veg].where(ser_valid_flag, val_dft)
+        # if 'lai' in var_veg[0]:
+        #     print(var_veg, df_init[var_veg].values)
+        #     print('ser_nan_flag', ser_valid_flag.values)
+        #     print('val_dft', val_dft.values)
+        #     print('\n')
+
+    return df_init
+
+
+# add surface specific info into `df_init`
+def add_sfc_init_df(df_init):
+    # create snow flag
+    ser_snow_init = df_init['snowinitially']
+    ser_snow_flag = ser_snow_init.where(ser_snow_init == 0, 1)
+    ser_snow_flag = (df_init['snowuse'] * ser_snow_flag)['0']
+
+    # land cover based assignment
+    list_sfc = ['paved', 'bldgs', 'evetr', 'dectr', 'grass', 'bsoil', 'water']
+    # dict {major variable: [minor variables]}
+    dict_var_sfc = {
+        var: ['{var}{sfc}'.format(var=var, sfc=sfc) for sfc in list_sfc]
+        for var in ['snowdens', 'snowfrac', 'snowpack']
+    }
+    dict_var_sfc.update({
+        'snowwater': ['snowwater{}state'.format(sfc) for sfc in list_sfc],
+        'soilstore_id': ['soilstore{}state'.format(sfc) for sfc in list_sfc],
+        'state_id': ['{}state'.format(sfc) for sfc in list_sfc],
+    })
+
+    # set values according to `dict_var_sfc`
+    # and generate the secondary dimensions
+    for var in dict_var_sfc:
+        for ind, var_sfc in zip(np.ndindex(len(list_sfc)), dict_var_sfc[var]):
+            ind_str = str(ind)
+            df_init[(var, ind_str)] = df_init[var_sfc]
+            if var_sfc.startswith('snow'):
+                df_init[(var, ind_str)] *= ser_snow_flag.values.flatten()
+
+    return df_init
+
+
+# add initial daily state into `df_init`
+def add_state_init_df(df_init):
+    # dimensional assignment
+    # (var, dim, `default value` or `reference name`)
+    list_var_dim = [
+        ('icefrac', 7, 0.2),
+        ('snowfallcum', 0, 0.),
+        ('snowalb', 0, 'snowalb0'),
+
+        ('porosity_id', 0, 'porosity0'),
+        ('albdectr_id', 0, 'albdectr0'),
+        ('albevetr_id', 0, 'albevetr0'),
+        ('albgrass_id', 0, 'albgrass0'),
+        ('decidcap_id', 0, 'decidcap0'),
+
+        ('lai_id', 3, 0.),
+        ('gdd_id', 5, 0.),
+        ('hdd_id', 12, 0.),
+        ('wuday_id', 9, 0.),
+
+        ('dt_since_start', 0, 0.),
+        ('tstep_prev', 0, 'tstep'),
+        ('tair24hr', int(24 * 3600 / df_init['tstep'].values[0, 0]), 273.15),
+    ]
+
+    # set values according to `list_var_dim`
+    # and generate the secondary dimensions
+    for var, dim, val in list_var_dim:
+        ind_dim = [str(i) for i in np.ndindex(int(dim))] if dim > 0 else ['0']
+        val_x = df_init[val] if isinstance(val, str) else val
+        for ind in ind_dim:
+            df_init[(var, str(ind))] = val_x
+
+    # modifications for special cases
+    # `lai_id` corrections:
+    df_init[('lai_id', '(0,)')] = df_init['laiinitialevetr']
+    df_init[('lai_id', '(1,)')] = df_init['laiinitialdectr']
+    df_init[('lai_id', '(2,)')] = df_init['laiinitialgrass']
+    # `gdd_id` corrections:
+    df_init[('gdd_id', '(2,)')] = 90
+    df_init[('gdd_id', '(3,)')] = -90
+    # `numcapita` calculation:
+    df_init[('numcapita', '0')] = \
+        df_init[['popdensdaytime', 'popdensnighttime']]\
+        .mean(axis=1)
+    # `gridiv` addition:
+    df_init[('gridiv', '0')] = df_init.index
+
+    return df_init
+
+
+# add additional parameters to `df` produced by `load_SUEWS_InitialCond_df`
+# @functools.lru_cache(maxsize=16)
+def load_InitialCond_grid_df(path_runcontrol):
+    # load base df of InitialCond
+    df_init = load_SUEWS_InitialCond_df(path_runcontrol)
+
+    # add Initial Condition variables from namelist file
+    df_init = add_file_init_df(df_init)
+
+    # add surface specific info into `df_init`
+    df_init = add_sfc_init_df(df_init)
+
+    # add veg info into `df_init`
+    df_init = add_veg_init_df(df_init)
+
+    # add initial daily state into `df_init`
+    df_init = add_state_init_df(df_init)
+
+    # # sort column names for consistency
+    # df_init = df_init.sort_index(axis=1)
+    df_init.index.set_names('grid', inplace=True)
+
+    # df_init.to_pickle('df_init.pkl')
+    # print('df_init.pkl done!')
+
+    # filter out unnecessary entries by re-arranging the columns
+    df_init = trim_df_state(df_init)
+
+    # normalise surface fractions to prevent non-1 sums
+    df_sfr = df_init.sfr
+    df_sfr = df_sfr.div(df_sfr.sum(axis=1), axis=0)
+    df_init.sfr = df_sfr
+
+    return df_init
