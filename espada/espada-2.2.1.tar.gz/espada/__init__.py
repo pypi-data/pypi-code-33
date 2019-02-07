@@ -1,0 +1,1 @@
+from espada.main import cli
