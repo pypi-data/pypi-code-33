@@ -1,0 +1,3 @@
+
+class BookkeepWarning(Warning):
+    pass
