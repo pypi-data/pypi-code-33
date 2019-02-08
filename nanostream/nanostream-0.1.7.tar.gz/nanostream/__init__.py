@@ -1,0 +1,3 @@
+import logging
+
+name = "nanostream"
