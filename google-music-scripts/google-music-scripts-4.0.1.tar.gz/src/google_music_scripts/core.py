@@ -1,0 +1,330 @@
+import math
+import platform
+import re
+from collections import defaultdict
+from pathlib import Path
+
+import audio_metadata
+import google_music_utils as gm_utils
+import pendulum
+from loguru import logger
+
+from .utils import get_album_art_path
+
+
+def download_songs(mm, songs, template=None):
+	logger.success(f"Downloading {len(songs)} songs from Google Music")
+
+	if not template:
+		template = Path.cwd()
+
+	songnum = 0
+	total = len(songs)
+	pad = len(str(total))
+
+	for song in songs:
+		songnum += 1
+
+		try:
+			audio, _ = mm.download(song)
+		except Exception as e:  # TODO: More specific exception.
+			logger.log(
+				'FAILURE',
+				f"({songnum:>{pad}}/{total}) Failed -- {song} | {e}"
+			)
+		else:
+			tags = audio_metadata.loads(audio).tags
+			filepath = gm_utils.template_to_filepath(template, tags).with_suffix('.mp3')
+
+			if filepath.is_file():
+				filepath.unlink()
+
+			filepath.parent.mkdir(parents=True, exist_ok=True)
+			filepath.touch()
+			filepath.write_bytes(audio)
+
+			logger.success(
+				f"({songnum:>{pad}}/{total}) Downloaded -- {filepath} ({song['id']})"
+			)
+
+
+def filter_google_dates(
+	songs,
+	*,
+	created_in=None,
+	created_on=None,
+	created_before=None,
+	created_after=None,
+	modified_in=None,
+	modified_on=None,
+	modified_before=None,
+	modified_after=None
+):
+
+	matched_songs = songs
+
+	def _dt_from_gm_timestamp(gm_timestamp):
+		return pendulum.from_timestamp(gm_utils.from_gm_timestamp(gm_timestamp))
+
+	def _match_created_date(songs, period):
+		return (
+			song
+			for song in songs
+			if _dt_from_gm_timestamp(song['creationTimestamp']) in period
+		)
+
+	def _match_modified_date(songs, period):
+		return (
+			song
+			for song in songs
+			if _dt_from_gm_timestamp(song['lastModifiedTimestamp']) in period
+		)
+
+	for period in [
+		created_in,
+		created_on,
+		created_before,
+		created_after
+	]:
+		if period is not None:
+			matched_songs = _match_created_date(matched_songs, period, )
+
+	for period in [
+		modified_in,
+		modified_on,
+		modified_before,
+		modified_after
+	]:
+		if period is not None:
+			matched_songs = _match_modified_date(matched_songs, period)
+
+	return list(matched_songs)
+
+
+def filter_local_dates(
+	filepaths,
+	*,
+	created_in=None,
+	created_on=None,
+	created_before=None,
+	created_after=None,
+	modified_in=None,
+	modified_on=None,
+	modified_before=None,
+	modified_after=None
+):
+	matched_filepaths = filepaths
+
+	def _match_created_date(filepaths, period):
+		for filepath in filepaths:
+			file_stat = filepath.stat()
+
+			if platform.system() == 'Windows':
+				created_timestamp = file_stat.st_ctime
+			else:
+				try:
+					created_timestamp = file_stat.st_birthtime
+				except AttributeError:
+					# Settle for modified time on *nix systems
+					# not supporting birth time.
+					created_timestamp = file_stat.st_mtime
+
+			if pendulum.from_timestamp(created_timestamp) in period:
+				yield filepath
+
+	def _match_modified_date(filepaths, period):
+		for filepath in filepaths:
+			modified_timestamp = filepath.stat().st_mtime
+
+			if pendulum.from_timestamp(modified_timestamp) in period:
+				yield filepath
+
+	for period in [
+		created_in,
+		created_on,
+		created_before,
+		created_after
+	]:
+		if period is not None:
+			matched_filepaths = _match_created_date(matched_filepaths, period)
+
+	for period in [
+		modified_in,
+		modified_on,
+		modified_before,
+		modified_after
+	]:
+		if period is not None:
+			matched_filepaths = _match_modified_date(matched_filepaths, period)
+
+	return list(matched_filepaths)
+
+
+def filter_metadata(songs, filters):
+	if filters:
+		logger.success("Filtering songs")
+
+		matched_songs = []
+
+		for filter_ in filters:
+			include_filters = defaultdict(list)
+			exclude_filters = defaultdict(list)
+
+			for condition in filter_:
+				if condition.oper == '+':
+					include_filters[condition.field].append(condition.pattern)
+				elif condition.oper == '-':
+					exclude_filters[condition.field].append(condition.pattern)
+
+			matched = songs
+
+			# Use all if multiple conditions for inclusion.
+			i_use_all = (
+				(len(include_filters) > 1)
+				or any(
+					len(v) > 1
+					for v in include_filters.values()
+				)
+			)
+			i_any_all = all if i_use_all else any
+			matched = gm_utils.include_items(
+				matched, any_all=i_any_all, ignore_case=True, **include_filters
+			)
+
+			# Use any if multiple conditions for exclusion.
+			e_use_all = not (
+				(len(exclude_filters) > 1)
+				or any(
+					len(v) > 1
+					for v in exclude_filters.values()
+				)
+			)
+			e_any_all = all if e_use_all else any
+			matched = gm_utils.exclude_items(
+				matched, any_all=e_any_all, ignore_case=True, **exclude_filters
+			)
+
+			for song in matched:
+				if song not in matched_songs:
+					matched_songs.append(song)
+	else:
+		matched_songs = songs
+
+	return matched_songs
+
+
+def get_google_songs(client, *, filters=None):
+	return filter_metadata(client.songs(), filters)
+
+
+def get_local_songs(
+	filepaths,
+	*,
+	filters=None,
+	max_depth=math.inf,
+	exclude_paths=None,
+	exclude_regexes=None,
+	exclude_globs=None
+):
+	def _exclude_paths(path, exclude_paths):
+		return any(
+			str(Path(exclude_path)) in str(path)
+			for exclude_path in exclude_paths
+		)
+
+	def _exclude_regexes(path, exclude_regexes):
+		return any(
+			re.search(regex, str(path))
+			for regex in exclude_regexes
+		)
+
+	local_songs = []
+	for filepath in filepaths:
+		if (
+			_exclude_paths(filepath, exclude_paths)
+			or _exclude_regexes(filepath, exclude_regexes)
+		):
+			continue
+
+		if filepath.is_dir():
+			start_level = len(filepath.parts)
+
+			exclude_files = set()
+			for exclude_glob in exclude_globs:
+				exclude_files |= set(filepath.rglob(exclude_glob))
+
+			for path in filepath.glob('**/*'):
+				if (
+					path.is_file()
+					and len(path.parent.parts) - start_level <= max_depth
+					and path not in exclude_files
+					and not _exclude_paths(path, exclude_paths)
+					and not _exclude_regexes(path, exclude_regexes)
+				):
+					with path.open('rb') as f:
+						if audio_metadata.determine_format(
+							f.read(4), extension=path.suffix
+						) is not None:
+							local_songs.append(path)
+		elif filepath.is_file():
+			with filepath.open('rb') as f:
+				if audio_metadata.determine_format(
+					f.read(4), extension=filepath.suffix
+				) is not None:
+					local_songs.append(filepath)
+
+	matched_songs = filter_metadata(local_songs, filters)
+
+	return matched_songs
+
+
+def upload_songs(
+	mm,
+	filepaths,
+	album_art=None,
+	no_sample=False,
+	delete_on_success=False
+):
+	logger.success(f"Uploading {len(filepaths)} songs to Google Music")
+
+	filenum = 0
+	total = len(filepaths)
+	pad = len(str(total))
+
+	for song in filepaths:
+		filenum += 1
+
+		album_art_path = get_album_art_path(song, album_art)
+
+		result = mm.upload(
+			song,
+			album_art_path=album_art_path,
+			no_sample=no_sample
+		)
+
+		if result['reason'] == 'Uploaded':
+			logger.success(
+				f"({filenum:>{pad}}/{total}) Uploaded -- {result['filepath']} ({result['song_id']})"
+			)
+		elif result['reason'] == 'Matched':
+			logger.success(
+				f"({filenum:>{pad}}/{total}) Matched -- {result['filepath']} ({result['song_id']})"
+			)
+		else:
+			if 'song_id' in result:
+				logger.success(
+					f"({filenum:>{pad}}/{total}) Already exists -- {result['filepath']} ({result['song_id']})"
+				)
+			else:
+				logger.log(
+					'FAILURE'
+					f"({filenum:>{pad}}/{total}) Failed -- {result['filepath']} | {result['reason']}"
+				)
+
+		if delete_on_success and 'song_id' in result:
+			try:
+				result['filepath'].unlink()
+			except Exception:
+				logger.warning(
+					f"Failed to remove {result['filepath']} after successful upload"
+				)
