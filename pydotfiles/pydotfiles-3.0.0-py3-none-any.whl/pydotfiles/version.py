@@ -1,0 +1,1 @@
+VERSION_NUMBER = "3.0.0"
