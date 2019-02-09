@@ -1,0 +1,4 @@
+
+
+class StopPipelineFlag(Exception):
+    pass
