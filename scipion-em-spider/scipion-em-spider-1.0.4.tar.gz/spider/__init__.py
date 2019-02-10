@@ -1,0 +1,98 @@
+# **************************************************************************
+# *
+# * Authors:     J.M. De la Rosa Trevin (delarosatrevin@scilifelab.se)
+# *
+# * Unidad de  Bioinformatica of Centro Nacional de Biotecnologia , CSIC
+# *
+# * This program is free software; you can redistribute it and/or modify
+# * it under the terms of the GNU General Public License as published by
+# * the Free Software Foundation; either version 2 of the License, or
+# * (at your option) any later version.
+# *
+# * This program is distributed in the hope that it will be useful,
+# * but WITHOUT ANY WARRANTY; without even the implied warranty of
+# * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# * GNU General Public License for more details.
+# *
+# * You should have received a copy of the GNU General Public License
+# * along with this program; if not, write to the Free Software
+# * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
+# * 02111-1307  USA
+# *
+# *  All comments concerning this program package may be sent to the
+# *  e-mail address 'scipion@cnb.csic.es'
+# *
+# **************************************************************************
+
+import os
+from os.path import abspath
+
+import pyworkflow.em
+from pyworkflow.utils import Environ, join
+
+from constants import *
+
+
+_logo = "spider_logo.png"
+_references = ['Shaikh2008', 'Frank1996b']
+
+
+class Plugin(pyworkflow.em.Plugin):
+    _homeVar = SPIDER_HOME
+    _pathVars = [SPIDER_HOME]
+    _supportedVersions = ['24.03']
+
+    @classmethod
+    def _defineVariables(cls):
+        cls._defineEmVar(SPIDER_HOME, 'spider-24.03')
+
+    @classmethod
+    def getEnviron(cls):
+        """ Load the environment variables needed for Spider.
+        If SPIDER_HOME is defined, the bin, man and proc folders will be
+        defined from it. If not, each of them should be defined separately.
+        """
+        env = Environ(os.environ)
+        if cls.getHome():
+            env.update(  # Spider needs this extra slash at the end
+                {SPBIN_DIR: cls.getHome('spider/bin') + '/',
+                 SPMAN_DIR: cls.getHome('spider/man') + '/',
+                 SPPROC_DIR: cls.getHome('spider/proc') + '/'})
+        else:
+            errors = ''
+            for var in [SPBIN_DIR, SPMAN_DIR, SPPROC_DIR]:
+                if not var in env:
+                    errors += "\n   Missing SPIDER variable: '%s'" % var
+            if len(errors):
+                print "ERRORS: " + errors
+
+        env.set('PATH', env[SPBIN_DIR], env.END)
+        return env
+
+    @classmethod
+    def getScript(cls, *paths):
+        """ Return the script that will be used. """
+        cmd = join(__path__[0], 'scripts', cls.getActiveVersion(), *paths)
+        return str(cmd)
+
+    @classmethod
+    def getProgram(cls, mpi=False):
+        program = SPIDER if mpi is False else SPIDER_MPI
+        cmd = abspath(join(cls.getEnviron()[SPBIN_DIR], program))
+
+        return str(cmd)
+
+    @classmethod
+    def defineBinaries(cls, env):
+
+        env.addPackage('spider', version='24.03',
+                       url='https://spider.wadsworth.org/spider_doc/spider/download/spiderweb.24.03.tar.gz',
+                       createBuildDir=True,
+                       buildDir='spider',
+                       target="spider/spider",
+                       neededProgs=['csh'],
+                       default=True)
+
+
+pyworkflow.em.Domain.registerPlugin(__name__)
+
