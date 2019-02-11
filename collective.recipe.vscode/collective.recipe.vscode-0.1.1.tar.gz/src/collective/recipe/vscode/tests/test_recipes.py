@@ -1,0 +1,323 @@
+# _*_ coding: utf-8 _*_
+from zc.buildout import rmtree
+from zc.buildout import UserError
+from zc.buildout.testing import Buildout
+from zc.buildout.testing import mkdir
+from zc.buildout.testing import read
+from zc.buildout.testing import write
+
+import json
+import os
+import tempfile
+import unittest
+
+
+JSON_TEMPLATE = os.path.join(
+    os.path.dirname(os.path.abspath(os.path.dirname(__file__))), "template.json"
+)
+TEST_DIR = os.path.abspath(os.path.dirname(__file__))
+
+
+class TestRecipe(unittest.TestCase):
+    """ """
+
+    def setUp(self):
+
+        self.here = os.getcwd()
+
+        self.location = tempfile.mkdtemp(prefix="collective.recipe.vscode")
+        mkdir(self.location, "develop-eggs")
+        os.chdir(self.location)
+
+        self.buildout = Buildout()
+        # Set eggs
+        self.buildout["buildout"]["directory"] = self.location
+
+        self.recipe_options = dict(
+            recipe="collective.recipe.vscode", eggs="zc.recipe.egg\nzc.buildout"
+        )
+
+    def test_install(self):
+        """"""
+        from ..recipes import Recipe
+        from ..recipes import mappings
+
+        buildout = self.buildout
+        recipe_options = self.recipe_options.copy()
+        recipe_options.update(
+            {
+                "black-enabled": "1",
+                "black-args": "--line-length 88",
+                "black-path": "$project_path/bin/black",
+                "flake8-enabled": "True",
+                "flake8-args": "--max-line-length 88",
+                "flake8-path": "${buildout:directory}/bin/flake8",
+                "isort-enabled": "True",
+            }
+        )
+        buildout["vscode"] = recipe_options
+        recipe = Recipe(buildout, "vscode", buildout["vscode"])
+        recipe.install()
+
+        generated_settings = json.loads(
+            read(os.path.join(self.location, ".vscode", "settings.json"))
+        )
+        # should be two, zc,recipe.egg, python site-package path
+        self.assertEqual(
+            2, len(generated_settings[mappings["autocomplete-extrapaths"]])
+        )
+        self.assertEqual(
+            generated_settings[mappings["flake8-path"]], self.location + "/bin/flake8"
+        )
+
+        # Isort executable should get automatically
+        self.assertEqual(
+            os.path.dirname(generated_settings[mappings["python-path"]]) + "/isort",
+            generated_settings[mappings["isort-path"]],
+        )
+
+        # Test with custom location with package
+        buildout["vscode"].update(
+            {
+                "packages": "/fake/path",
+                "project-root": os.path.join(tempfile.gettempdir(), "hshdshgdrts"),
+            }
+        )
+
+        recipe = Recipe(buildout, "vscode", buildout["vscode"])
+        recipe.install()
+
+        generated_settings = json.loads(
+            read(
+                os.path.join(
+                    buildout["vscode"]["project-root"], ".vscode", "settings.json"
+                )
+            )
+        )
+
+        # Now should three (two+one) links
+        self.assertEqual(
+            3, len(generated_settings[mappings["autocomplete-extrapaths"]])
+        )
+
+        # restore
+        rmtree.rmtree(buildout["vscode"]["project-root"])
+        del buildout["vscode"]["project-root"]
+        del buildout["vscode"]["packages"]
+
+        # Test ignores
+        buildout["buildout"].update({"develop": "."})
+        buildout["vscode"].update({"ignores": "zc.buildout", "ignore-develop": "True"})
+        recipe = Recipe(buildout, "vscode", buildout["vscode"])
+        recipe.install()
+
+        generated_settings = json.loads(
+            read(os.path.join(self.location, ".vscode", "settings.json"))
+        )
+
+        # should be two, zc.buildout is ignored
+        self.assertEqual(
+            2, len(generated_settings[mappings["autocomplete-extrapaths"]])
+        )
+
+        # Failed Test: existing project file with invalid json
+        write(
+            os.path.join(self.location, ".vscode"), "settings.json", """I am invalid"""
+        )
+        try:
+            recipe.update()
+            raise AssertionError(
+                "Code should not come here, as invalid json inside existing project"
+                "file! ValueError raised by UserError"
+            )
+        except UserError:
+            pass
+
+        # Failed Test: exception rasied by zc.recipe.Egg
+        recipe.options.update(
+            {
+                # Invalid Egg
+                "eggs": "\\"
+            }
+        )
+        try:
+            recipe.install()
+            raise AssertionError(
+                "Code should not come here, as should raised execption "
+                "because of invalid eggs"
+            )
+        except UserError:
+            pass
+
+    def test__prepare_settings(self):
+        """ """
+        from ..recipes import mappings
+        from ..recipes import Recipe
+
+        buildout = self.buildout
+        recipe_options = self.recipe_options.copy()
+
+        buildout["vscode"] = recipe_options
+        recipe = Recipe(buildout, "vscode", buildout["vscode"])
+
+        test_eggs_locations = ["/tmp/eggs/egg1.egg", "/tmp/eggs/egg2.egg"]
+
+        develop_eggs_locations = []
+
+        vsc_settings = recipe._prepare_settings(
+            test_eggs_locations, develop_eggs_locations, {}
+        )
+        self.assertNotIn(mappings["isort-path"], vsc_settings)
+        self.assertNotIn(mappings["black-path"], vsc_settings)
+        self.assertNotIn(mappings["flake8-path"], vsc_settings)
+        self.assertNotIn(mappings["pylint-path"], vsc_settings)
+
+        recipe_options["jedi-enabled"] = "True"
+        recipe_options["pylint-enabled"] = "True"
+        recipe_options["flake8-enabled"] = "True"
+        recipe_options["flake8-path"] = "/fake/path/flake8"
+        recipe_options["black-enabled"] = "True"
+        recipe_options["black-path"] = "/tmp/bin/black"
+        recipe_options["black-args"] = "--line-length\n88"
+
+        buildout["vscode"].update(recipe_options)
+
+        recipe = Recipe(buildout, "vscode", buildout["vscode"])
+        vsc_settings = recipe._prepare_settings(
+            test_eggs_locations, develop_eggs_locations, {}
+        )
+
+        # Test Anaconda Settings are avialable
+        self.assertIn(mappings["flake8-path"], vsc_settings)
+        # make sure formatter provider is black
+        self.assertEqual(vsc_settings[mappings["formatting-provider"]], "black")
+        self.assertEqual(vsc_settings[mappings["black-path"]], "/tmp/bin/black")
+        self.assertEqual(vsc_settings[mappings["black-args"]], ["--line-length", "88"])
+
+        # Let's test path, args are ignored
+        buildout["vscode"]["black-enabled"] = "False"
+
+        recipe = Recipe(buildout, "vscode", buildout["vscode"])
+        vsc_settings2 = recipe._prepare_settings(
+            test_eggs_locations, develop_eggs_locations, {}
+        )
+        self.assertNotIn(mappings["formatting-provider"], vsc_settings2)
+        self.assertNotIn(mappings["black-path"], vsc_settings2)
+        self.assertNotIn(mappings["black-args"], vsc_settings2)
+
+        # test with existing settings
+        recipe = Recipe(buildout, "vscode", buildout["vscode"])
+        vsc_settings3 = recipe._prepare_settings(
+            test_eggs_locations, develop_eggs_locations, vsc_settings
+        )
+
+        # only formatting-provider should removed, others should be kept
+        self.assertNotIn(mappings["formatting-provider"], vsc_settings)
+        self.assertIn(mappings["black-path"], vsc_settings)
+        self.assertNotIn(mappings["black-path"], vsc_settings3)
+
+    def test__write_project_file(self):
+        """ """
+        from ..recipes import mappings
+        from ..recipes import Recipe
+
+        buildout = self.buildout
+        recipe_options = self.recipe_options.copy()
+        buildout["vscode"] = recipe_options
+
+        test_eggs_locations = ["/tmp/eggs/egg1.egg", "/tmp/eggs/egg2.egg"]
+        develop_eggs_locations = []
+
+        recipe_options["jedi-enabled"] = "True"
+        recipe_options["pylint-enabled"] = "True"
+        recipe_options["flake8-enabled"] = "True"
+        recipe_options["flake8-path"] = "/fake/path/flake8"
+        recipe_options["black-enabled"] = "True"
+        recipe_options["black-path"] = "/tmp/bin/black"
+        recipe_options["black-args"] = "--line-length\n88"
+
+        buildout["vscode"].update(recipe_options)
+
+        recipe = Recipe(buildout, "vscode", buildout["vscode"])
+        recipe._set_defaults()
+
+        vsc_settings = recipe._prepare_settings(
+            test_eggs_locations, develop_eggs_locations, {}
+        )
+        recipe._write_project_file(vsc_settings, {})
+        # By default no overwrite configuration, means existing configuration should be
+        # available
+        generated_settings = json.loads(
+            read(os.path.join(self.location, ".vscode", "settings.json"))
+        )
+
+        # Make sure other value kept intact, because that option is not handled by
+        # this recipe.
+        self.assertEqual(
+            generated_settings[mappings["flake8-path"]], "/fake/path/flake8"
+        )
+        # Test:: default folders option is added, because existing file don't have this
+        self.assertEqual(
+            generated_settings[mappings["black-args"]], ["--line-length", "88"]
+        )
+
+        buildout["vscode"].update(
+            {"black-enabled": "False", "flake8-path": "/new/path/flake8"}
+        )
+
+        recipe = Recipe(buildout, "vscode", buildout["vscode"])
+        vsc_settings2 = recipe._prepare_settings(
+            test_eggs_locations, develop_eggs_locations, vsc_settings
+        )
+
+        recipe._write_project_file(vsc_settings2, vsc_settings)
+
+        generated_settings = json.loads(
+            read(os.path.join(self.location, ".vscode", "settings.json"))
+        )
+        # there should not any formatting provider
+        self.assertNotIn(mappings["formatting-provider"], generated_settings)
+        # Black path still exists
+        self.assertIn(mappings["black-path"], generated_settings)
+        # Test: overwrite works!
+        self.assertEqual(
+            generated_settings[mappings["flake8-path"]], "/new/path/flake8"
+        )
+
+    def tearDown(self):
+        os.chdir(self.here)
+        rmtree.rmtree(self.location)
+
+
+class TestRecipeUninstall(unittest.TestCase):
+    """ """
+
+    def setUp(self):
+
+        self.here = os.getcwd()
+
+        self.location = tempfile.mkdtemp(prefix="plone.recipe.vscode")
+        os.chdir(self.location)
+
+        self.buildout = Buildout()
+        # Set eggs
+        self.buildout["buildout"]["directory"] = self.location
+
+        self.recipe_options = dict(recipe="plone.recipe.vscode", overwrite="False")
+
+    def test_uninstall(self):
+        """ """
+        from ..recipes import Recipe
+        from ..recipes import uninstall
+
+        recipe_options = self.recipe_options.copy()
+        self.buildout["vscode"] = recipe_options
+
+        recipe = Recipe(self.buildout, "vscode", self.buildout["vscode"])
+        recipe._set_defaults()
+
+        uninstall(recipe.name, recipe.options)
+
+    def tearDown(self):
+        os.chdir(self.here)
+        rmtree.rmtree(self.location)
