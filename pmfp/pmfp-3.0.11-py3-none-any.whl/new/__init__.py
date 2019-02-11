@@ -1,0 +1,1 @@
+from .methods import new,new_component
