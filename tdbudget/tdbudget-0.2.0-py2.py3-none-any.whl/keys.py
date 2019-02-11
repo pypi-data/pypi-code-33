@@ -1,0 +1,7 @@
+CATEGORY_NAME = "name"
+LONG_TERM = "long_term"
+MONTH_START = "month_start"
+MONTHLY = "monthly"
+NAME = "name"
+SAVED = "saved"
+SLUSH = "slush"
