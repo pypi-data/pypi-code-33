@@ -1,0 +1,24 @@
+from setuptools import setup
+
+setup(
+    name='salure_helpers',
+    version='2.0.2',
+    description='Files with helpfull code, developed by Salure',
+    url='https://bitbucket.org/salurebi/salure_helpers/',
+    author='Salure',
+    author_email='bi@salure.nl',
+    license='Salure License',
+    packages=['salure_helpers'],
+    package_data={'salure_helpers': ['templates/*']},
+    install_requires=[
+        'pandas',
+        'mandrill',
+        'psycopg2',
+        'pymysql',
+        'requests',
+        'pysftp',
+        'twine',
+        'clickhouse-driver'
+    ],
+    zip_safe=False
+)
