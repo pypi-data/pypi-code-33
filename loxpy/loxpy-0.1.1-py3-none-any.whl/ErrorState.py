@@ -1,0 +1,2 @@
+hadError: bool
+hadRuntimeError: bool
