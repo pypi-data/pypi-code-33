@@ -1,0 +1,1 @@
+from .nn.morph import once # facility tate "morph.once"
