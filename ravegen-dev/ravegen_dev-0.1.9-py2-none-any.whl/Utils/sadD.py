@@ -1,0 +1,1 @@
+_CONSOLE_ENGINE_COMMANDS_FILE_PATH = "ravegen/commands"
