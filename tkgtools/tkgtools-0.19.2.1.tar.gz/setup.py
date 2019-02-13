@@ -1,0 +1,94 @@
+#!/usr/bin/env python
+# coding=utf-8
+
+from setuptools import setup, find_packages
+
+setup(
+    name='tkgtools',
+    version='0.19.2.1',
+    description=(
+        'tkgtools is created by George Zhao, who is working for NOKIA, 2010-2012, 2014-2019.\n This lib is used for implementing algorithm in 3GPP 35.206, f1, f2, f3, f4, f5, f1* and f5*'
+    ),
+    long_description="""
+===================
+Introduction
+===================
+tkgtools is a library which is used as a base for 3GPP security architecture.
+
+tkg is stands for 3GPP Key Generator.
+
+Only f1, f2, f3, f4, f5, f1* and f5* are supported in this library.
+
+tkgtools is written on python 3.6.5, python 2 is not supported.
+
+===================
+Author
+===================
+George Zhao who is working for Nokia in 2010-2012, 2014-2019.
+
+maito: georgezhao_1980@163.com
+
+===================
+How to get it
+===================
+
+::
+
+	pip install tkgtools
+
+===================
+Functions
+===================
+f1(key, rand, sqn, amf, op, mac_a)
+  key(list of int), length 16
+  rand(list of int), length 16
+  sqn(list of int), length 6
+  amf(list of int), length 2
+  op(list of int), length 16
+  mac_a(list of int), length 8
+  mac_a is used as a return value.
+
+f2345(key, rand, op, res, ck, ik , ak)
+  key(list of int), length 16
+  rand(list of int), length 16
+  op(list of int), length 16
+  res(list of int), length 8
+  ck(list of int), length 16
+  ik(list of int), length 16
+  ak(list of int), length 6
+  res, ck, ik, and ak are used as return values.
+  
+f1star(key, rand, sqn, amf, op, mac_s)
+  key(list of int), length 16
+  rand(list of int), length 16
+  sqn(list of int), length 6
+  amf(list of int), length 2
+  mac_s(list of int), length 8
+  mac_s is used as a return value.	
+
+f5star(key, rand, op, ak)
+  key(list of int), length 16
+  rand(list of int), length 16
+  op(list of int), length 16
+  ak(list of int), length 6
+  ak is used as return value.
+
+All test data could be retrieved in 3GPP 35.207
+""",
+    author='George Zhao',
+    author_email='georgezhao_1980@163.com',
+    maintainer='George Zhao',
+    maintainer_email='georgezhao_1980@163.com',
+    license='BSD License',
+    packages=find_packages(),
+    platforms=["all"],
+    url='http://not-available.now',
+    classifiers=[
+        'Development Status :: 3 - Alpha',
+        'Operating System :: OS Independent',
+        'Intended Audience :: Developers',
+        'License :: OSI Approved :: BSD License',
+        'Programming Language :: Python :: 3.6',
+        'Topic :: Software Development :: Libraries'
+    ],
+)
