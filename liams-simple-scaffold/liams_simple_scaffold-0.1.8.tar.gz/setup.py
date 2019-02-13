@@ -1,0 +1,23 @@
+import setuptools
+
+with open("README.md", "r") as fh:
+    long_description = fh.read()
+
+setuptools.setup(
+    name="liams_simple_scaffold",
+    version="0.1.8",
+    author="Liam McIntyre",
+    author_email="shimbalama@gmail.com",
+    description="A small scaffolding package",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
+    url="https://github.com/shimbalama/liams_simple_scaffold.git",
+    packages=setuptools.find_packages(),
+    scripts = ['bin/make_scaffold.py'],
+    include_package_data=True,
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: OS Independent",
+    ],
+)
