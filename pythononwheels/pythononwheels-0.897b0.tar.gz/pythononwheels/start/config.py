@@ -1,0 +1,146 @@
+#
+#
+# pow settings file
+# 
+import simplejson as json
+import {{appname}}.encoders
+import os
+import logging
+import datetime
+
+server_settings = {
+    "protocol"          :   "http://",
+    "host"              :   "localhost",
+    "port"              :   8080,
+    "debug"             :   True,
+    "debug_print"       :   True,
+    #Logs a stack trace if the IOLoop is blocked for more than s seconds. so 0.050 means 50ms
+    "IOLoop.set_blocking_log_threshold" : 0, 
+    "logging"           :   True,
+    "https"             :   False,
+    "template_path"     :   os.path.join(os.path.dirname(__file__), "views"),
+    "static_url_prefix" :   "/static/",
+    "static_path"       :   os.path.join(os.path.dirname(__file__), "static"),
+    "login_url"         :   "/login",
+    "xsrf_cookies"      :   False,
+    #"log_function"      :   you can give your own log function here.
+    "cookie_secret"     :   "{{cookie_secret}}"
+}
+
+templates = {
+    "template_path"     :   server_settings["template_path"],
+    "handler_path"      :   os.path.join(os.path.dirname(__file__), "handlers"),
+    "model_path"        :   os.path.join(os.path.dirname(__file__), "models"),
+    "stubs_path"        :   os.path.join(os.path.dirname(__file__), "stubs"),
+    "views_path"        :   os.path.join(os.path.dirname(__file__), "views")
+}
+
+myapp = {
+    "app_name"          :   "{{appname}}",
+    "default_format"    :   "json",
+    "supported_formats" :   ["json", "csv", "xml", "html"],
+    "encoder"           :   {
+           "json"   :   {{appname}}.encoders.json_to_json(),
+            "csv"   :   {{appname}}.encoders.json_to_csv(),
+            "xml"   :   {{appname}}.encoders.json_to_xml()
+    },
+    "upload_path"       :   os.path.join(server_settings["static_path"], "upload"), #this is just a demo.
+    "page_size"         :   5,
+    "enable_auth"       :   False,   # False, simple or custom
+    "sql_auto_schema"   :   True,
+    "logfile"           :   os.path.join(os.path.dirname(__file__),"pow.log"),
+    "logformat"         :   logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'),
+    "id_pattern"        :   "[0-9\-a-zA-Z]+",       # the regex used to math IDs in URLs (uuid in this case)
+    "date_format"       :   "%Y-%m-%d %H:%M:%S",
+    "internal_fields"   :   ["created_at", "last_updated", "_uuid"],  # these are not included in the scaffolded views at all
+    "default_rest_route":   "list",
+    "list_separator"    :   " ",
+    "pwhash_method"     :   "pbkdf2:sha256",      # see: http://werkzeug.pocoo.org/docs/0.14/utils/#module-werkzeug.security
+    "simple_conversion":   True
+    #"environment"      :   "development"       # set the current environment (also see the db section)
+}
+
+BASE_DIR = os.path.dirname(__file__)
+database = {
+    "default_values": {
+        "string"    :   "",
+        "integer"   :   0,
+        "float"     :   0.0,
+        "list"      :   [],
+        "boolean"   :   False,
+        "datetime"  :   datetime.datetime.utcnow(),
+        "dict"      :   {},
+        "binary"    :   None
+
+    },
+    "sql"   : {
+        "loglevel"  :   logging.INFO,
+        #
+        # this is an example for sqlite
+        #
+        "type"      :   "sqlite", #or: "db+driver" e.g. => "postgres+psycopg2" ...
+        "dbname"    :   os.path.join(BASE_DIR, 'db.sqlite'),   # just a name for non file based DBs
+        "host"      :   None,     
+        "port"      :   None,     
+        "user"      :   None,     
+        "passwd"    :   None,
+        "enabled"   :   True          # switch currently unused
+        #
+        # this is an example for postgres (psycopg2 driver) you can use your preferred driver of course 
+        #     
+        # "type"      :   "postgres+psycopg2",
+        # "dbname"    :   "powdb",   
+        # "host"      :   "localhost",       
+        # "port"      :   5432,   
+        # "user"      :   "postgres",
+        # "passwd"    :   "postgres",
+        # "enabled"   :   True          # switch currently unused
+    },
+    "tinydb" : {
+        "dbname"    :   os.path.join(BASE_DIR, 'tiny.db'),
+        "host"      :   None,       
+        "port"      :   None,   
+        "user"      :   None,
+        "passwd"    :   None,
+        "enabled"   :   True       # switch currently unused
+    },
+    "mongodb" : {
+        "dbname"    :   "testdb",  
+        "atlas"     :   False,
+        "atlas_cstr":   "",     # usually just copy the Atlas connection string here
+        "urlencode" :   False,  # if set to True you need to give usr / pwd below 
+        "atlas_user":   "",     # will be urllib.parse.quoted
+        "atlas_pwd" :   "",     # will still be raw
+        "host"      :   "localhost",       
+        "port"      :   27017,   
+        "user"      :   None,
+        "passwd"    :   None,
+        "enabled"   :   False       # switch currently unused
+    },
+    "elastic" : {
+        "dbname"    :   "testdb",   # == elasticsearch index 
+        "hosts"     :   ["localhost"],       
+        "port"      :   9200,   
+        "user"      :   None,
+        "passwd"    :   None,
+        "enabled"   :   False       # switch currently unused
+    }
+}
+
+mydash={
+    # see: https://dash.plot.ly/getting-started
+    "external_stylesheets"  :   ['https://codepen.io/chriddyp/pen/bWLwgP.css']
+}
+
+beta_settings = {
+    # Beta settings are erxperimental. You can find details for each Beta setting
+    # on www.pythononwheels.org/beta
+    
+    # Name          :    Enabled ?
+    "dot_format"    :   True
+}
+
+#from handlers.very_raw_own_handler import VeryRawOwnHandler
+routes = [
+            #(r'.*', VeryRawOwnHandler)
+]
