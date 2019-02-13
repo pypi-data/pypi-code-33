@@ -1,0 +1,871 @@
+# Copyright (c) 2012-2014 Kapiche Limited
+# Author: Sam Hames <sam.hames@kapiche.com>
+"""Test search functionality:
+
+1. Low level filter and filter_and_rank search primitives.
+2. Integration of the resultset functionality with search output.
+
+"""
+from __future__ import division
+
+import csv
+import os
+import pytest
+
+from caterpillar import composition
+from caterpillar.storage.sqlite import SqliteStorage
+from caterpillar.processing.index import IndexWriter, IndexReader, IndexConfig, NonIndexedFieldError
+from caterpillar.processing import schema
+from caterpillar.test_util import TestAnalyser
+
+
+def test_searching_filtering_nps(index_dir):
+    """Test searching nps-backed data."""
+    with open('caterpillar/test_resources/big.csv', 'r') as f:
+        analyser = TestAnalyser()
+        config = IndexConfig(
+            SqliteStorage, schema.Schema(
+                respondant=schema.NUMERIC,
+                region=schema.CATEGORICAL_TEXT(indexed=True),
+                store=schema.CATEGORICAL_TEXT(indexed=True),
+                liked=schema.TEXT(analyser=analyser),
+                disliked=schema.TEXT(analyser=analyser),
+                would_like=schema.TEXT(analyser=analyser),
+                nps=schema.NUMERIC(indexed=True),
+                fake=schema.NUMERIC(indexed=True),
+                fake2=schema.CATEGORICAL_TEXT(indexed=True),
+                fake3=schema.CATEGORICAL_TEXT(indexed=True)
+            )
+        )
+        with IndexWriter(index_dir, config) as writer:
+            csv_reader = csv.reader(f)
+            next(csv_reader)  # Skip header
+            empty_rows = 0
+            for row in csv_reader:
+                if len(row[3]) + len(row[4]) + len(row[5]) == 0:
+                    empty_rows += 1
+                writer.add_document(respondant=row[0], region=row[1], store=row[2], liked=row[3],
+                                    disliked=row[4], would_like=row[5], nps=row[6], fake2=None, fake3=' spaces ')
+
+        with IndexReader(index_dir) as reader:
+
+            results = reader.filter(should=['point', 'pointed', 'points'], include_fields=['would_like'])
+            assert len(results) == 14
+
+            # Verify uniqueness of returned results
+            docs = set()
+            result_count = 0
+            for field in ['liked', 'disliked', 'would_like']:
+                # query returns the same 5 documents for each unstructured field searched.
+                results = reader.filter(metadata={'region': {'=': 'Otago'}, 'nps': {'<': 5}}, include_fields=[field])
+                result_count += len(results)
+                for frame_id, frame in reader.get_frames(frame_ids=results):
+                    docs.add(frame['_doc_id'])
+
+            # Individual field searches should match the overall field searches.
+            assert len(docs) == 5 == len(
+                reader.filter(
+                    metadata={'region': {'=': 'Otago'}, 'nps': {'<': 5}}, return_documents=True
+                )
+            )
+            assert result_count == 15 == len(
+                reader.filter(
+                    metadata={'region': {'=': 'Otago'}, 'nps': {'<': 5}}
+                )
+            ) == len(
+                reader.filter(
+                    metadata={'region': {'=': 'Otago'}, 'nps': {'not in': [5, 6, 7, 8, 9, 10]}}
+                )
+            )
+
+            # Metadata field searching
+            metadata = {
+                'nps': {'=': 10},
+                'store': {'=': 'DANNEVIRKE'}
+            }
+            assert len(reader.filter(metadata=metadata)) == 6 == \
+                len(reader.filter(metadata=metadata, include_fields=['liked'])) + \
+                len(reader.filter(metadata=metadata, include_fields=['disliked'])) + \
+                len(reader.filter(metadata=metadata, include_fields=['would_like']))
+
+            num_christchurch = len(reader.filter(metadata={'region': {'=': 'Christchurch'}}, include_fields=['liked']))
+            valid_nps_christchurch = len(
+                reader.filter(metadata={'region': {'=': 'Christchurch'}, 'nps': {'>': 0}}, include_fields=['liked'])
+            )
+            assert valid_nps_christchurch < num_christchurch
+
+            # Test invariant properties of sets for comparing a subset of terms.
+            all_terms = {term: freq for i, (term, freq) in enumerate(reader.get_frequencies('liked')) if i % 40 == 0}
+
+            for left_term in all_terms:
+                for right_term in all_terms:
+
+                    if left_term == right_term:
+                        continue
+
+                    # Test the frame length normalisation
+                    raw = reader.filter(
+                        should=[left_term, right_term], include_fields=['liked'], normalise_length=False
+                    )
+                    normalised = reader.filter(
+                        should=[left_term, right_term], include_fields=['liked'], normalise_length=True
+                    )
+
+                    assert len(normalised) == len(raw)
+                    # <=, because if there's only one token in the frame the scores will be the same.
+                    assert sum(i[0] for i in normalised.values()) <= sum(i[0] for i in raw.values())
+
+                    # Accumulate result sets for each combination of queries and searches
+                    left_or_right, left_and_right, left_not_right, right_not_left = [], [], [], []
+                    for scoring in ['tf-idf', 'tf', 'binarised-tf', 'binarised-tf-idf']:
+                        left_or_right.append(
+                            reader.filter(should=[left_term, right_term], include_fields=['liked'], scoring=scoring)
+                        )
+                        left_and_right.append(
+                            reader.filter(must=[left_term, right_term], include_fields=['liked'], scoring=scoring)
+                        )
+                        left_not_right.append(reader.filter(
+                            should=[left_term], must_not=[right_term], include_fields=['liked'], scoring=scoring)
+                        )
+                        right_not_left.append(reader.filter(
+                            must_not=[left_term], should=[right_term], include_fields=['liked'], scoring=scoring)
+                        )
+
+                    # Each scorer should match the same frames
+                    all_combos = [left_or_right, left_and_right, left_not_right, right_not_left]
+                    for results in all_combos:
+                        results_accumulation = set()
+                        for r in results:
+                            results_accumulation |= r.keys()
+                        assert len(results_accumulation) == len(results[0])
+                        score_sums = [sum(i[0] for i in r.values()) for r in results]
+                        tfidf, tf, binarisedtf, binarisedtfidf = score_sums
+                        if tf > 0:
+                            assert tfidf >= binarisedtfidf > binarisedtf
+                            assert tf >= binarisedtf
+
+                    # Combination invariants
+                    for a, b, c, d in zip(*all_combos):
+                        assert len(a) == (len(b) + len(c) + len(d))
+                        assert len(b) <= min(all_terms[left_term], all_terms[right_term])
+
+            for i in range(1, 11):
+                total = len(reader.filter(metadata={'nps': {'>': 0}}))
+                assert (
+                    len(reader.filter(metadata={'nps': {'>=': i}})) +
+                    len(reader.filter(metadata={'nps': {'<': i}})) ==
+                    total
+                )
+
+            assert (
+                len(reader.filter(metadata={'nps': {'>=': 1, '<=': 3}})) ==
+                len(reader.filter(metadata={'nps': {'in': (1, 2, 3)}}))
+            )
+            assert (
+                len(reader.filter(metadata={'nps': {'>=': 1, '<=': 3}}, must=['point'])) ==
+                len(reader.filter(metadata={'nps': {'in': (1, 2, 3)}}, must=['point']))
+            )
+            assert len(reader.filter(metadata={'fake': {'=': 1}})) == 0
+            assert len(reader.filter(metadata={'region': {'=': 'asdfjhsdfsdfa'}})) == 0
+            assert (
+                len(reader.filter(metadata={'fake3': {'=': ' spaces '}}, include_fields=['liked'])) ==
+                reader.get_frame_count(['liked'])
+            )
+
+            # empty resulset - filtering and ranking
+            assert len(reader.filter_and_rank(must=['doesnotexist'])) == 0
+            assert len(reader.filter_and_rank(must=['doesnotexist'], return_documents=True)) == 0
+
+            # Pagination and limit options for filter
+            # 1. Documents and only metadata
+            documents = reader.filter(metadata={'fake3': {'=': ' spaces '}}, return_documents=True, limit=5)
+            assert len(documents) == 5
+
+            next_page = reader.filter(
+                metadata={'fake3': {'=': ' spaces '}}, return_documents=True, limit=5, pagination_key=max(documents)
+            )
+            assert max(next_page) == max(documents) + 5  # True iff there are no deletes
+
+            upper_documents = reader.filter(
+                metadata={'fake3': {'=': ' spaces '}}, return_documents=True, upper_pagination_key=max(documents)
+            )
+            assert len(upper_documents) == 5
+
+            paged_documents = reader.filter(
+                metadata={'fake3': {'=': ' spaces '}}, return_documents=True, pagination_key=max(documents),
+                upper_pagination_key=max(next_page)
+            )
+            assert len(paged_documents) == 6  # The upper pagination key is inclusive, so 5 + 1
+
+            # 2. Documents, metadata and text
+            documents = reader.filter(
+                metadata={'fake3': {'=': ' spaces '}}, must=['point'], return_documents=True, limit=5
+            )
+            assert len(documents) == 5
+
+            next_page = reader.filter(
+                metadata={'fake3': {'=': ' spaces '}}, must=['point'], return_documents=True, limit=5,
+                pagination_key=max(documents)
+            )
+            assert [i > max(documents) for i in next_page.keys()]
+
+            upper_documents = reader.filter(
+                metadata={'fake3': {'=': ' spaces '}}, must=['point'], return_documents=True, limit=5,
+                upper_pagination_key=max(documents)
+            )
+            assert [i <= max(documents) for i in upper_documents.keys()]
+
+            paged_documents = reader.filter(
+                metadata={'fake3': {'=': ' spaces '}}, must=['point'], return_documents=True, limit=5,
+                pagination_key=max(documents), upper_pagination_key=max(next_page)
+            )
+            assert [max(next_page) >= i > max(documents) for i in next_page.keys()]
+
+            # 3. Frames and only metadata
+            frames = reader.filter(metadata={'fake3': {'=': ' spaces '}}, limit=5)
+            assert len(frames) == 5
+
+            next_page = reader.filter(
+                metadata={'fake3': {'=': ' spaces '}}, limit=5, pagination_key=max(frames)
+            )
+            assert max(next_page) == max(frames) + 5  # True iff there are no deletes
+
+            upper_frames = reader.filter(
+                metadata={'fake3': {'=': ' spaces '}}, upper_pagination_key=max(frames)
+            )
+            assert len(upper_frames) == 5
+
+            paged_frames = reader.filter(
+                metadata={'fake3': {'=': ' spaces '}}, pagination_key=max(frames),
+                upper_pagination_key=max(next_page)
+            )
+            assert len(paged_frames) == 6  # The upper pagination key is inclusive, so 5 + 1
+
+            # 4. Frames, metadata and text
+            frames = reader.filter(
+                metadata={'fake3': {'=': ' spaces '}}, must=['point'], limit=5
+            )
+            assert len(frames) == 5
+            next_page = reader.filter(
+                metadata={'fake3': {'=': ' spaces '}}, must=['point'], limit=5,
+                pagination_key=max(frames)
+            )
+            assert [i > max(frames) for i in next_page.keys()]
+
+            # Compare the two paths for scoring for frames including pagination
+            frames = reader.filter(metadata={'fake3': {'=': ' spaces '}}, should=['fly', 'buys', 'points'])
+            scored_frames = composition.score_and_rank(frames, limit=10)
+            searched_frames = reader.filter_and_rank(
+                metadata={'fake3': {'=': ' spaces '}}, should=['fly', 'buys', 'points'], limit=10
+            )
+
+            paged_search_frames = reader.filter_and_rank(
+                metadata={'fake3': {'=': ' spaces '}}, should=['fly', 'buys', 'points'], limit=5,
+                pagination_key=scored_frames[4]
+            )
+            for i, j in zip(scored_frames, searched_frames):
+                # Same frame_ids, OR, same score with different frame id
+                assert i[0] == j[0]
+
+            for i, j in zip(scored_frames[5:], paged_search_frames):
+                # Same frame_ids, OR, same score with different frame id
+                assert i[0] == j[0]
+
+            # Compare the two paths for scoring for documents including pagination
+            documents = reader.filter(
+                metadata={'fake3': {'=': ' spaces '}}, return_documents=True,
+                should=['fly', 'buys', 'points']
+            )
+            scored_documents = composition.score_and_rank(documents, limit=10)
+            searched_documents = reader.filter_and_rank(
+                metadata={'fake3': {'=': ' spaces '}}, return_documents=True,
+                should=['fly', 'buys', 'points'], limit=10
+            )
+            paged_search_documents = reader.filter_and_rank(
+                metadata={'fake3': {'=': ' spaces '}}, return_documents=True,
+                should=['fly', 'buys', 'points'], limit=5,
+                pagination_key=scored_documents[4]
+            )
+            for i, j in zip(scored_documents, searched_documents):
+                # Same frame_ids, OR, same score with different frame id
+                assert i[0] == j[0]
+
+            for i, j in zip(scored_documents[5:], paged_search_documents):
+                # Same frame_ids, OR, same score with different frame id
+                assert i[0] == j[0]
+
+            # Check incorrect usage of various search things.
+            with pytest.raises(ValueError):  # Unknown operator
+                reader.filter(metadata={'fake3': {'x': ' spaces '}})
+            with pytest.raises(ValueError):  # Invalid operator for a valid field
+                reader.filter(metadata={'fake3': {'>': ' spaces '}})
+            with pytest.raises(ValueError):  # Unknown field
+                reader.filter(metadata={'fake5': {'>': ' spaces '}})
+            with pytest.raises(ValueError):  # Valid field, but not supported by SQLite
+                reader.filter(metadata={'fake3': {'*=': ' spaces '}})
+            with pytest.raises(ValueError):  # Valid field, but not supported by SQLite
+                reader.filter(metadata={'fake3': {'*=': ' spaces '}}, must=['point'])
+            with pytest.raises(ValueError):  # Must_not without driving terms raises an error
+                reader.filter(must_not=['potato'])
+            with pytest.raises(ValueError):  # Must specify a valid scoring algorithm
+                reader.filter(must=['points'], scoring='potato')
+            with pytest.raises(ValueError):  # Ranking not supported for metadata only
+                reader.filter_and_rank(metadata={'fake3': {'=': ' spaces '}})
+
+            # Retrieve empty frames from the model
+            assert 15620 == len(reader.filter_nonempty())
+            assert 266 == len(composition.exclude(reader.filter_range(limit=None), reader.filter_nonempty()))
+            assert 10846 == len(reader.filter_nonempty(include_fields=['liked']))
+            assert 43 == len(composition.exclude(
+                reader.filter_range(limit=None, include_fields=['liked']),
+                reader.filter_nonempty(include_fields=['liked']))
+            )
+
+            # Confirmation pagination is working
+            assert 197 == len(reader.filter_nonempty(upper_pagination_key=200))
+            paged_results = reader.filter_nonempty(pagination_key=100, upper_pagination_key=200)
+            assert 98 == len(paged_results)
+            assert all(101 <= frame_id <= 200 for frame_id in paged_results)
+
+        # add empty frames and assert that the results are the same
+        with IndexWriter(index_dir, config) as writer:
+            for i in range(100):
+                writer.add_document(liked='', frame_size=0)
+
+        with IndexReader(index_dir) as reader:
+            assert 15620 == len(reader.filter_nonempty())
+            assert 10846 == len(reader.filter_nonempty(include_fields=['liked']))
+            assert 0 == len(reader.filter_nonempty(pagination_key=15886))
+            assert 366 == len(composition.exclude(reader.filter_range(limit=None), reader.filter_nonempty()))
+
+
+def test_reader_query_basic(index_dir):
+    """Test querystring query basic functionality."""
+    with open(os.path.abspath('caterpillar/test_resources/alice.txt'), 'r') as f:
+        data = f.read()
+        config = IndexConfig(SqliteStorage, schema=schema.Schema(text1=schema.TEXT, text2=schema.TEXT))
+        with IndexWriter(index_dir, config) as writer:
+            writer.add_document(text1=data, text2=data)
+
+    # Simple terms
+    with IndexReader(index_dir) as reader:
+        alice_count = len(reader.filter(must=['Alice'], include_fields=['text1']))
+        king_count = len(reader.filter(must=['King'], include_fields=['text1']))
+        assert alice_count > 0
+        assert king_count > 0
+
+        # Boolean operators
+        alice_and_king_count = len(reader.filter(must=['King', 'Alice'], include_fields=['text1']))
+        alice_and_king_all_fields = len(reader.filter(must=['King', 'Alice']))
+        alice_or_king_count = len(reader.filter(should=['King', 'Alice'], include_fields=['text1']))
+        alice_not_king_count = len(reader.filter(must_not=['King'], must=['Alice'], include_fields=['text1']))
+        king_not_alice_count = len(reader.filter(must_not=['Alice'], must=['King'], include_fields=['text1']))
+        not_king_not_alice_count = len(composition.exclude(
+            {frame_id: [0] for frame_id in reader.get_frame_ids('text1')},
+            reader.filter(should=['King', 'Alice'], include_fields=['text1'])
+        ))
+
+        assert alice_not_king_count == alice_count - alice_and_king_count
+        assert king_not_alice_count == king_count - alice_and_king_count
+        assert alice_or_king_count == alice_not_king_count + king_not_alice_count + alice_and_king_count
+        assert not_king_not_alice_count == reader.get_frame_count(['text1']) - alice_or_king_count
+
+        at_least_2 = len(reader.filter(at_least_n=(2, ['King', 'Alice']), include_fields=['text1']))
+        at_least_2_ex = len(reader.filter(at_least_n=(2, ['King', 'Alice', 'doesnotexist']), include_fields=['text1']))
+        at_least_1 = len(reader.filter(at_least_n=(1, ['King', 'Alice']), include_fields=['text1']))
+        at_least_4 = len(reader.filter(at_least_n=(4, ['King', 'Alice']), include_fields=['text1']))
+
+        assert at_least_2 == at_least_2_ex == alice_and_king_count
+        assert at_least_1 == alice_or_king_count
+        assert at_least_4 == 0
+
+        # Wildcards - not currently supported
+        # assert len(reader.filter(should=['*ice'], include_fields=['text1'])) > alice_count
+        # assert len(reader.filter(should=['K??g'], include_fields=['text1'])) == king_count
+
+        # Raises an error if the field doesn't exist
+        with pytest.raises(ValueError):
+            alice_and_king_count = len(reader.filter(must=['King', 'Alice'], include_fields=['doesnotexist']))
+
+        # Boolean Operators across fields
+        field1 = reader.filter(must=['King', 'Alice'], include_fields=['text1'])
+        field2 = reader.filter(must=['King', 'Alice'], include_fields=['text2'])
+
+        and_fields = composition.match_all(field1, field2)
+        or_fields = composition.match_any(field1, field2)
+
+        assert len(and_fields) == 0
+        assert len(or_fields) == alice_and_king_all_fields
+
+        # Now test some document retrieval:
+        alice_document_count = len(reader.filter(must=['Alice'], include_fields=['text1'], return_documents=True))
+        king_document_count = len(reader.filter(must=['King'], include_fields=['text1'], return_documents=True))
+        assert alice_document_count == king_document_count == 1
+
+    with IndexWriter(index_dir, config) as writer:
+        writer.add_document(text1='a Alice', text2='b King')
+
+    # Simple terms
+    with IndexReader(index_dir) as reader:
+        alice_document_count1 = len(reader.filter(must=['Alice'], include_fields=['text1'], return_documents=True))
+        king_document_count1 = len(reader.filter(must=['King'], include_fields=['text1'], return_documents=True))
+        alice_document_count2 = len(reader.filter(must=['Alice'], include_fields=['text2'], return_documents=True))
+        king_document_count2 = len(reader.filter(must=['King'], include_fields=['text2'], return_documents=True))
+        alice_document_count_all = len(reader.filter(must=['Alice'], return_documents=True))
+        king_document_count_all = len(reader.filter(must=['King'], return_documents=True))
+        assert alice_document_count1 == king_document_count2 == 2
+        assert alice_document_count2 == king_document_count1 == 1
+        assert alice_document_count_all == king_document_count_all == 2
+
+
+def test_reader_query_advanced(index_dir):
+    """Test querysting query advanced searching."""
+    config = IndexConfig(SqliteStorage, schema.Schema(liked=schema.TEXT, disliked=schema.TEXT,
+                                                      age=schema.NUMERIC(indexed=True),
+                                                      gender=schema.CATEGORICAL_TEXT(indexed=True),
+                                                      non_indexed=schema.CATEGORICAL_TEXT(indexed=False)))
+    with IndexWriter(index_dir, config) as writer:
+        writer.add_document(liked='product', disliked='service', age=20, gender='male')
+        writer.add_document(liked='service', disliked='product', age=30, gender='male')
+        writer.add_document(liked='service', disliked='price', age=40, gender='female')
+        writer.add_document(liked='product', disliked='product', age=80, gender='female')
+
+    # Metadata
+    with IndexReader(index_dir) as reader:
+        # Test presence of terms for each text_field
+        # field: "liked":
+        assert len(reader.filter(metadata={'age': {'=': 80}}, include_fields=['liked'])) == 1
+        assert len(reader.filter(metadata={'age': {'<': 80}}, include_fields=['liked'])) == 3
+        assert len(reader.filter(metadata={'age': {'>=': 20}}, include_fields=['liked'])) == 4
+        assert len(reader.filter(must=['product'], metadata={'gender': {'=': 'female'}}, include_fields=['liked'])) == 1
+
+        product_results = reader.filter(must=['product'], include_fields=['liked'])
+        male_gender = reader.filter(metadata={'gender': {'=': 'male'}}, include_fields=['liked'])
+        both_genders = reader.filter(metadata={'gender': {'in': ('female', 'male')}}, include_fields=['liked'])
+
+        assert len(composition.exclude(product_results, male_gender)) == 1
+        assert len(composition.exclude(product_results, both_genders)) == 0
+
+        # field: "disliked":
+        assert len(reader.filter(metadata={'age': {'=': 80}}, include_fields=['disliked'])) == 1
+        assert len(reader.filter(metadata={'age': {'<': 80}}, include_fields=['disliked'])) == 3
+        assert len(reader.filter(metadata={'age': {'>=': 20}}, include_fields=['disliked'])) == 4
+        assert len(
+            reader.filter(must=['product'], metadata={'gender': {'=': 'female'}}, include_fields=['disliked'])
+        ) == 1
+
+        product_results = reader.filter(must=['product'], include_fields=['disliked'])
+        male_gender = reader.filter(metadata={'gender': {'=': 'male'}}, include_fields=['disliked'])
+        both_genders = reader.filter(metadata={'gender': {'in': ('female', 'male')}}, include_fields=['disliked'])
+
+        assert len(product_results) == 2
+        assert len(composition.exclude(product_results, male_gender)) == 1
+        assert len(composition.exclude(product_results, both_genders)) == 0
+
+        # Both fields
+        assert len(reader.filter(metadata={'age': {'=': 80}})) == 2
+        assert len(reader.filter(metadata={'age': {'<': 80}})) == 6
+        assert len(reader.filter(metadata={'age': {'>=': 20}})) == 8
+        assert len(reader.filter(must=['product'], metadata={'gender': {'=': 'female'}})) == 2
+
+        product_results = reader.filter(must=['product'])
+        male_gender = reader.filter(metadata={'gender': {'=': 'male'}})
+        both_genders = reader.filter(metadata={'gender': {'in': ('female', 'male')}})
+
+        assert len(product_results) == 4
+        assert len(composition.exclude(product_results, male_gender)) == 2
+        assert len(composition.exclude(product_results, both_genders)) == 0
+
+        # Comparing searching against the full metadata:
+        all_metadata = reader.get_metadata()
+        assert len(all_metadata['gender']['male']) == len(male_gender)
+
+        # Checking record of field values
+        metadata_field_values = reader.get_metadata_values()
+        assert len(metadata_field_values) == 2
+        assert len(metadata_field_values['age']) == 4
+        assert len(metadata_field_values['gender']) == 2
+
+        # Check the full metadata experience makes sense with paging.
+        lower_page = reader.get_metadata(return_documents=True, upper_pagination_key=2)
+        upper_page = reader.get_metadata(return_documents=True, pagination_key=2)
+        both_pages = reader.get_metadata(return_documents=True, pagination_key=1, upper_pagination_key=3)
+
+        assert all(
+            [d_id > 2 for values in upper_page.values() for docs in values.values() for d_id in docs]
+        )
+        assert all(
+            [d_id <= 2 for values in lower_page.values() for docs in values.values() for d_id in docs]
+        )
+        assert all(
+            [3 >= d_id > 1 for values in both_pages.values() for docs in values.values() for d_id in docs]
+        )
+
+        with pytest.raises(NonIndexedFieldError):
+            reader.filter(metadata={'non_indexed': {'=': 1}})
+
+
+def test_searching_alice(index_dir):
+    """Test basic searching functions for Alice."""
+    with open(os.path.abspath('caterpillar/test_resources/alice.txt'), 'r') as f:
+        f.seek(0)
+        data = f.read()
+        analyser = TestAnalyser()
+        config = IndexConfig(SqliteStorage, schema=schema.Schema(text=schema.TEXT(analyser=analyser)))
+        with IndexWriter(index_dir, config) as writer:
+            writer.add_document(text=data, frame_size=2)
+
+        with IndexReader(index_dir) as reader:
+            assert len(reader.filter(should=['King'])) == 59
+            assert len(reader.filter(should=['King', 'Queen'])) == 124 == \
+                len(reader.filter(should=['Queen', 'King']))
+            assert len(reader.filter(must=['King', 'Queen'])) == 5 == \
+                len(composition.match_all(
+                    reader.filter(should=['King']), reader.filter(should=['Queen'])
+                ))
+
+            assert len(reader.filter(should=['King'], must_not=['Queen'])) == 54
+
+            assert (
+                len(reader.filter(must=['Alice', ('thought', 'little')])) == 70 ==
+                len(
+                    composition.match_all(
+                        reader.filter(must=['Alice']),
+                        composition.match_any(
+                            reader.filter(must=['thought']),
+                            reader.filter(must=['little'])))))
+
+            assert len(reader.filter(should=["thistermdoesntexist"])) == 0
+            assert len(reader.filter(must=["Mock", "Turtle"])) == 55
+
+            jury_frames = composition.score_and_rank(reader.filter(must=["jury"]), limit=1)
+            assert len(jury_frames) == 1
+            frame = reader.get_frame(jury_frames[0][0])
+            assert "jury" in frame['_text']
+
+            # Look at different variations of scoring and boosting.
+            voice_hits = len(reader.filter(should=["voice"]))
+            assert voice_hits == 46
+
+            misses = 0
+            results = composition.score_and_rank(reader.filter(should=["Alice", "voice"]), limit=voice_hits)
+            assert len(results) == voice_hits
+            for frame_id, hit in reader.get_frames(frame_ids=[i[0] for i in results]):
+                misses += (1 if "voice" not in hit['_text'] else 0)
+            assert misses == 10
+
+            misses = 0
+            results = composition.score_and_rank(
+                composition.match_any(
+                    reader.filter(should=["Alice"]),
+                    composition.boost(reader.filter(should=['voice']), 0.2)
+                ),
+                limit=voice_hits
+            )
+            assert len(results) == voice_hits
+            for frame_id, hit in reader.get_frames(frame_ids=[i[0] for i in results]):
+                misses += (1 if "voice" not in hit['_text'] else 0)
+            assert misses == 35
+
+            misses = 0
+            results = composition.score_and_rank(
+                composition.match_any(
+                    reader.filter(should=["Alice"]),
+                    composition.boost(reader.filter(should=['voice']), 0.6)
+                ),
+                limit=voice_hits
+            )
+            assert len(results) == voice_hits
+            for frame_id, hit in reader.get_frames(frame_ids=[i[0] for i in results]):
+                misses += (1 if "voice" not in hit['_text'] else 0)
+            assert misses == 10
+
+            misses = 0
+            results = composition.score_and_rank(
+                composition.match_any(
+                    reader.filter(should=["Alice"]),
+                    composition.boost(reader.filter(should=['voice']), 20)
+                ),
+                limit=voice_hits
+            )
+            assert len(results) == voice_hits
+            for frame_id, hit in reader.get_frames(frame_ids=[i[0] for i in results]):
+                misses += (1 if "voice" not in hit['_text'] else 0)
+            assert misses == 0
+
+            # No limits for the search results - the lowest scored correspond to the most frequent
+            # term - Alice
+            misses = 0
+            results = composition.score_and_rank(reader.filter(should=["Alice", "voice"]), limit=0)
+            for frame_id, hit in reader.get_frames(frame_ids=[i[0] for i in results[-voice_hits:]]):
+                misses += (1 if "voice" not in hit['_text'] else 0)
+            assert misses == voice_hits
+
+            misses = 0
+            results = composition.score_and_rank(
+                composition.match_any(
+                    reader.filter(should=["voice"]),
+                    composition.boost(reader.filter(should=['Alice']), 20)
+                ),
+                limit=0
+            )
+
+            for frame_id, hit in reader.get_frames(frame_ids=[i[0] for i in results[-voice_hits:]]):
+                misses += (1 if "voice" not in hit['_text'] else 0)
+            assert misses == 11
+
+            results = reader.filter(should=["King"], must_not=['court', 'evidence'])
+            scored = composition.score_and_rank(results, limit=25)
+            assert len(scored) == 25
+            assert len(results) == 52 == len(composition.exclude(
+                reader.filter(should=["King"]),
+                reader.filter(should=['court', 'evidence'])
+            ))
+
+            for frame_id, hit in reader.get_frames(frame_ids=[i[0] for i in scored]):
+                assert "evidence" not in hit['_text']
+                assert "court" not in hit['_text']
+                assert hit['_field'] == 'text'
+                assert all([i in hit for i in ('_id', '_doc_id')])
+
+            with pytest.raises(TypeError):
+                # Invalid query format
+                reader.filter(['hello', 'text'])
+
+
+def test_searching_alice_simple(index_dir):
+    """Test searching for Alice with the simple scorer."""
+    with open(os.path.abspath('caterpillar/test_resources/alice.txt'), 'r') as f:
+        f.seek(0)
+        data = f.read()
+        analyser = TestAnalyser()
+        config = IndexConfig(SqliteStorage, schema=schema.Schema(text=schema.TEXT(analyser=analyser)))
+        with IndexWriter(index_dir, config) as writer:
+            writer.add_document(text=data, frame_size=2)
+
+        with IndexReader(index_dir) as reader:
+            results1 = reader.filter(should=['Alice', 'Caterpillar'])
+            # Should be the same as results1 - supported for convenience
+            results2 = reader.filter(should=[('Alice', 'Caterpillar')])
+            # variations on a term should be the same in this context
+            results3 = reader.filter(must=[('Alice', 'Caterpillar')])
+
+            assert results1.keys() == results2.keys() == results3.keys()
+
+            for frame_id, frame in reader.get_frames(None, frame_ids=results1):
+                assert 'Alice' in frame['_text'] or 'Caterpillar' in frame['_text']
+
+            # Now score, rank and limit
+            scored_results = composition.score_and_rank(results1, limit=25)
+            assert len(scored_results) == 25
+            matching_frames = list(
+                reader.get_frames(None, frame_ids=[scored_results[0][0], scored_results[-1][0]])
+            )
+            assert 'Alice' in matching_frames[0][1]['_text'] and 'Caterpillar' in matching_frames[0][1]['_text']
+            assert 'Alice' not in matching_frames[-1][1]['_text']
+
+
+def test_searching_mt_warning(index_dir):
+    """Test searching for mt warning data."""
+    with open(os.path.abspath('caterpillar/test_resources/mt_warning_utf8.txt'), 'r') as f:
+        data = f.read()
+        analyser = TestAnalyser()
+        config = IndexConfig(SqliteStorage, schema=schema.Schema(text=schema.TEXT(analyser=analyser)))
+        with IndexWriter(index_dir, config) as writer:
+            writer.add_document(text=data, frame_size=2)
+
+        with IndexReader(index_dir) as reader:
+            assert len(reader.filter(should=['1770'])) == 2
+            assert len(reader.filter(should=['1,900'])) == 1
+            assert len(reader.filter(should=['4.4'])) == 1
+
+
+def test_searching_twitter(index_dir):
+    """Test searching twitter data."""
+    with open('caterpillar/test_resources/twitter_sentiment.csv', 'r') as f:
+        analyser = TestAnalyser()
+        config = IndexConfig(SqliteStorage, schema=schema.Schema(text=schema.TEXT(analyser=analyser),
+                                                                 sentiment=schema.CATEGORICAL_TEXT(indexed=True)))
+        with IndexWriter(index_dir, config) as writer:
+            csv_reader = csv.reader(f)
+            next(csv_reader)  # Skip header
+            for row in csv_reader:
+                writer.add_document(text=row[1], sentiment=row[0])
+
+        with IndexReader(index_dir) as reader:
+            assert len(reader.filter(should=['@NYSenate'])) == 1
+            assert len(reader.filter(should=['summerdays@gmail.com'])) == 1
+
+            assert (
+                len(reader.filter(metadata={'sentiment': {'=': 'positive'}})) +
+                len(reader.filter(metadata={'sentiment': {'=': 'negative'}})) ==
+                reader.get_frame_count(['text'])
+            )
+
+
+def test_range_paging_alice(index_dir):
+    """Test paging through a dataset by key with filter_range."""
+    with open(os.path.abspath('caterpillar/test_resources/alice.txt'), 'r') as f:
+        f.seek(0)
+        data = f.read()
+        analyser = TestAnalyser()
+        config = IndexConfig(
+            SqliteStorage,
+            schema=schema.Schema(
+                text1=schema.TEXT(analyser=analyser),
+                text2=schema.TEXT(analyser=analyser)
+            )
+        )
+
+        with IndexWriter(index_dir, config) as writer:
+            writer.add_document(text1=data, frame_size=2)
+            writer.add_document(text1=data, frame_size=2)
+            writer.add_document(text2=data, frame_size=2)
+
+        with IndexReader(index_dir) as reader:
+            total_frames = reader.get_frame_count(['text1']) + reader.get_frame_count(['text2'])
+            total_documents = reader.get_document_count()
+
+            # Paginate through all the frames:
+            frames = reader.filter_range(limit=10)
+            frame_set = frames.keys()
+            frame_count = 10
+
+            while len(frames) > 0:
+                frames = reader.filter_range(limit=10, pagination_key=max(frames))
+                frame_set |= frames.keys()
+                frame_count += len(frames)
+
+            assert len(frame_set) == frame_count == total_frames
+
+            # All the frames for one field:
+            frames = reader.filter_range(include_fields=['text2'], limit=10)
+            frame_set = frames.keys()
+            frame_count = 10
+
+            while len(frames) > 0:
+                frames = reader.filter_range(limit=10, include_fields=['text2'], pagination_key=max(frames))
+                frame_set |= frames.keys()
+                frame_count += len(frames)
+
+            assert len(frame_set) == frame_count == reader.get_frame_count(['text2'])
+
+            # Paginate through all the documents:
+            docs = reader.filter_range(limit=1, return_documents=True)
+            doc_set = docs.keys()
+            doc_count = 1
+
+            while len(docs) > 0:
+                docs = reader.filter_range(limit=1, return_documents=True, pagination_key=max(docs))
+                doc_set |= docs.keys()
+                doc_count += len(docs)
+
+            assert len(doc_set) == doc_count == total_documents
+
+            # range query with no limit:
+            docs = reader.filter_range(return_documents=True, pagination_key=2, limit=None)
+            assert 3 in docs
+            assert len(docs) == 1
+
+            frames = reader.filter_range(pagination_key=2000, limit=None)
+            assert len(frames) == total_frames - 2000
+
+
+def test_search_alice_attributes(index_dir):
+    """Whole bunch of functional tests on the index."""
+    with open(os.path.abspath('caterpillar/test_resources/alice.txt'), 'r') as f:
+        data = f.read()
+        analyser = TestAnalyser()
+        writer = IndexWriter(
+            index_dir, IndexConfig(
+                SqliteStorage, schema.Schema(
+                    text1=schema.TEXT(analyser=analyser), text2=schema.TEXT,
+                    document=schema.TEXT(analyser=analyser, indexed=False),
+                    blank=schema.NUMERIC(indexed=True), ref=schema.ID(indexed=True)
+                )
+            )
+        )
+        with writer:
+            writer.add_document(text1=data, text2=data, document='alice.txt', blank=None, ref=123, frame_size=2)
+
+        # Label all the frames with some nonsense attributes
+        with IndexReader(index_dir) as reader:
+            frame_ids = list(reader.get_frame_ids('text1'))
+
+        attribute_index = {}
+
+        for f_id in frame_ids:
+            attribute_index[f_id] = {}
+            attribute_index[f_id]['numerical_score'] = f_id // 10
+            if f_id % 3 == 0:
+                attribute_index[f_id]['sentiment'] = 'positive'
+            if f_id % 11 == 0:
+                attribute_index[f_id]['named_entity'] = str(f_id)
+
+        with writer:
+            writer.append_frame_attributes(attribute_index)
+
+        with IndexReader(index_dir) as reader:
+            positive_sentiment = reader._filter_attributes({'sentiment': {'=': 'positive'}})
+            assert len(positive_sentiment) == len(frame_ids) // 3
+            positive_sentiment_field_selective = reader._filter_attributes(
+                {'sentiment': {'=': 'positive'}},
+                include_fields=['text1']
+            )
+            assert len(positive_sentiment_field_selective) == len(frame_ids) // 3
+            high_scores = reader._filter_attributes({'numerical_score': {'>=': 50}})
+            assert len(high_scores) == max(frame_ids) - 499
+            positive_high_scores = reader._filter_attributes(
+                {'numerical_score': {'>=': 50}, 'sentiment': {'=': 'positive'}}
+            )
+            assert len(positive_high_scores) == len(composition.match_all(positive_sentiment, high_scores))
+
+            empty_field = reader._filter_attributes({'sentiment': {'=': 'positive'}}, include_fields=['text2'])
+            assert len(empty_field) == 0
+
+            complement_empty_field = reader._filter_attributes(
+                {'sentiment': {'=': 'positive'}},
+                exclude_fields=['text2'])
+            assert len(complement_empty_field) == len(positive_sentiment)
+
+            with pytest.raises(ValueError):
+                reader._filter_attributes({'sentiment': {'*=': 'positive'}})
+
+            positive_documents = reader._filter_attributes({'sentiment': {'=': 'positive'}}, return_documents=True)
+            assert len(positive_documents) == 1
+
+            paged_index = reader._filter_attributes({'sentiment': {'=': 'positive'}}, limit=20)
+            assert len(paged_index) == 20
+            assert max(paged_index) == 60
+            paged_index = reader._filter_attributes({'sentiment': {'=': 'positive'}}, limit=20, pagination_key=60)
+            assert len(paged_index) == 20
+            assert max(paged_index) == 120
+
+            paged_index = reader._filter_attributes({'sentiment': {'=': 'positive'}}, upper_pagination_key=81)
+            assert max(paged_index) == 81
+
+
+def test_searching_dates(index_dir):
+    """Test searching for mt warning data."""
+    analyser = TestAnalyser()
+    config = IndexConfig(
+        SqliteStorage, schema=schema.Schema(text=schema.TEXT(analyser=analyser), date=schema.DATETIME(indexed=True))
+    )
+    with IndexWriter(index_dir, config) as writer:
+        writer.add_document(text='this is the first row', date='2012-12-27T00:00:00')
+        writer.add_document(text='and another', date='2012-12-28T00:00:00')
+        writer.add_document(text='and the last', date='2013-01-01T00:00:00')
+
+    with IndexReader(index_dir) as reader:
+        assert len(reader.filter(metadata={'date': {'>=': '2012-12-27T00:00:00'}})) == 3
+        assert len(reader.filter(metadata={'date': {'>': '2012-12-27T00:00:00'}})) == 2
+        assert len(reader.filter(metadata={'date': {'>': '2013-01-01T00:00:00'}})) == 0
+        assert len(reader.filter(metadata={'date': {'<': '2013-01-01T00:00:00'}})) == 2
+        assert len(reader.filter(metadata={'date': {'<=': '2013-01-01T00:00:00'}})) == 3
+        assert len(reader.filter(metadata={'date': {'in': ('2012-12-27T00:00:00', '2013-01-01T00:00:00')}})) == 2
+        assert len(reader.filter(metadata={'date': {'between': ('2012-12-28T00:00:00', '2012-12-31T00:00:00')}})) == 1
+        assert len(
+            reader.filter(metadata={'date': {'not between': ('2012-12-28T00:00:00', '2012-12-31T00:00:00')}})
+        ) == 2
+        with pytest.raises(ValueError):
+            assert len(reader.filter(metadata={'date': {'between': ('2012-12-28T00:00:00',)}})) == 1
