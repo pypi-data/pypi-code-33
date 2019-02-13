@@ -1,0 +1,1 @@
+name = "god_mode"
