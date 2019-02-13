@@ -1,0 +1,2 @@
+def helpme:
+	return("help")
