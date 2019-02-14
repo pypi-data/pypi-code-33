@@ -1,0 +1,2 @@
+class OpenRoverException(Exception):
+    pass
