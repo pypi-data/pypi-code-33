@@ -1,0 +1,26 @@
+import setuptools
+
+with open("README.md", "r") as fh:
+    long_description = fh.read()
+
+with open("../requirements.txt", "r") as f:
+    requirements = f.read()
+
+setuptools.setup(
+    name="kekas",
+    version="0.1.1",
+    author="Aleksandr Belskikh",
+    author_email="belskikh.aleksandr@gmail.com",
+    description="Jast another DL library.",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
+    url="https://github.com/belskikh/kekas",
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: OS Independent",
+    ],
+    license="MIT",
+    python_requires=">=3.6.0",
+    install_requires=requirements
+)
