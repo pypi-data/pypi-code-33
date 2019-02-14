@@ -1,0 +1,1 @@
+# Sets an execution order for the session object. The goal is to do things like implant what needs to be where.
