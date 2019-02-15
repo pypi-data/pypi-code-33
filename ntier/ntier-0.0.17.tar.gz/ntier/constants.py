@@ -1,0 +1,4 @@
+'''Module constants.'''
+PAGE_DEFAULT = 1
+PER_PAGE_DEFAULT = 25
+PER_PAGE_MAX = 100
