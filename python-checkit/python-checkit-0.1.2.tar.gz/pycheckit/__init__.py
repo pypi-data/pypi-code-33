@@ -1,0 +1,1 @@
+from .pycheckit import Checkit
