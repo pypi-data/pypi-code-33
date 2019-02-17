@@ -1,0 +1,32 @@
+
+from setuptools import setup, find_packages
+from os import path
+from io import open
+
+here = path.abspath(path.dirname(__file__))
+
+with open(path.join(here, 'README.md'), encoding='utf-8') as f:
+    long_description = f.read()
+
+setup(
+    name='TaiwanTrainVerificationCode2text', 
+    version='1.0.1', 
+    description='Taiwan Train Verification Code to text', 
+    long_description=long_description, 
+    long_description_content_type='text/markdown',  
+    url='https://github.com/linsamtw/TaiwanTrainVerificationCode2text',  
+    author='linsam', 
+    author_email='samlin266118@gmail.com', 
+    classifiers=[
+        'Development Status :: 3 - Alpha',
+        'Intended Audience :: Developers',
+        'Topic :: Software Development :: Build Tools',
+        'License :: OSI Approved :: MIT License',
+        'Programming Language :: Python :: 3.6',
+    ],
+    keywords='Verification Code, python, cnn, keras',
+    #packages=find_packages(exclude=['numpy', 'pymysql', 'pandas']),
+    project_urls={
+        'Source': 'https://github.com/linsamtw/TaiwanTrainVerificationCode2text',
+    },
+)
